@@ -25,7 +25,7 @@ generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 # --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel): message: str
 class ServiceEnum(str, Enum):
-    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain__veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
+    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
 class SearchFilters(BaseModel):
     township: str = Field(None, description="The township or area, e.g., 'Permas Jaya'.")
@@ -86,22 +86,28 @@ def handle_chat(query: UserQuery):
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
+    # We now check if any of the results actually contain distance information
+    context_contains_distance = any(clinic.get('distance') is not None for clinic in top_5_clinics)
+
     if top_5_clinics:
-        context += f"I searched for clinics with the following criteria: {filters}.\n"
-        context += "Based on your request, here are the most relevant clinics I found:\n"
+        context += "Based on my search, here are the most relevant clinics I found:\n"
         for clinic in top_5_clinics:
-            context += f"- Name: {clinic.get('name')}, Township: {clinic.get('township')}, Rating: {clinic.get('rating')} stars, Distance: {clinic.get('distance')}km.\n"
+            clinic_info = f"- Name: {clinic.get('name')}, Township: {clinic.get('township')}, Rating: {clinic.get('rating')} stars."
+            if clinic.get('distance') is not None:
+                clinic_info += f" Distance: {clinic.get('distance')}km."
+            context += clinic_info + "\n"
     else:
         context = "I could not find any clinics that matched your specific criteria in the database."
 
+    # <<< THIS IS THE CRITICAL REFINEMENT >>>
     augmented_prompt = f"""
     You are a helpful assistant for the SG-JB Dental Platform.
     Your task is to provide a conversational answer to the user's question based ONLY on the context provided.
+    Assume the context is 100% correct. Summarize the findings in a helpful, confident way.
     
-    IMPORTANT RULE: If your answer mentions distance or lists clinics with distances, you MUST preface your entire response with the sentence: "Please note, all distances are measured from the Johor Bahru CIQ complex."
-
-    Assume the context is 100% correct. Do not apologize or say you cannot access information.
-    Summarize the findings in a helpful, confident way.
+    IMPORTANT RULE: After your main answer, if the context below contains the word "Distance", you MUST add the following sentence at the very end of your response, on a new line:
+    "(Note: All distances are measured from the Johor Bahru CIQ complex.)"
+    Do not add this note if the context does not mention distance.
 
     CONTEXT:
     {context}
