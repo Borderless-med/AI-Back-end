@@ -35,6 +35,7 @@ class SearchFilters(BaseModel):
     max_distance: float = Field(None, description="The maximum acceptable distance in kilometers from a reference point (like the CIQ). E.g., for 'within 10km', this would be 10.")
 
 # --- FastAPI App ---
+# Create the FastAPI app
 app = FastAPI()
 @app.get("/")
 def read_root(): return {"message": "Hello!"}
