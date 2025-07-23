@@ -25,7 +25,28 @@ generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 # --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel): message: str
 class ServiceEnum(str, Enum):
-    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
+    tooth_filling = 'tooth_filling'
+    root_canal = 'root_canal'
+    dental_crown = 'dental_crown'
+    dental_implant = 'dental_implant'
+    wisdom_tooth = 'wisdom_tooth'
+    gum_treatment = 'gum_treatment'
+    dental_bonding = 'dental_bonding'
+    inlays_onlays = 'inlays_onlays'
+    teeth_whitening = 'teeth_whitening'
+    composite_veneers = 'composite_veneers'
+    porcelain_veneers = 'porcelain_veneers'
+    enamel_shaping = 'enamel_shaping'
+    braces = 'braces'
+    gingivectomy = 'gingivectomy'
+    bone_grafting = 'bone_grafting'
+    sinus_lift = 'sinus_lift'
+    frenectomy = 'frenectomy'
+    tmj_treatment = 'tmj_treatment'
+    sleep_apnea_appliances = 'sleep_apnea_appliances'
+    crown_lengthening = 'crown_lengthening'
+    oral_cancer_screening = 'oral_cancer_screening'
+    alveoplasty = 'alveoplasty'
 
 class SearchFilters(BaseModel):
     township: str = Field(None, description="The township or area, e.g., 'Permas Jaya'.")
@@ -52,11 +73,24 @@ def handle_chat(query: UserQuery):
     try:
         response = planner_model.generate_content(f"Extract search filters from this query: '{query.message}'", tools=[SearchFilters])
         function_call = response.candidates[0].content.parts[0].function_call
-        args = function_call.args; service_value = args.get("service")
-        filters = { "township": args.get("township"), "min_rating": args.get("min_rating"), "service": service_value.value if isinstance(service_value, Enum) else service_value, "max_distance": args.get("max_distance"), "min_dentist_skill": args.get("min_dentist_skill"), "min_pain_management": args.get("min_pain_management"), "min_cost_value": args.get("min_cost_value"), "min_staff_service": args.get("min_staff_service"), "min_ambiance_cleanliness": args.get("min_ambiance_cleanliness"), "min_convenience": args.get("min_convenience") }
+        args = function_call.args
+        service_value = args.get("service")
+        filters = {
+            "township": args.get("township"),
+            "min_rating": args.get("min_rating"),
+            "service": service_value.value if isinstance(service_value, Enum) else service_value,
+            "max_distance": args.get("max_distance"),
+            "min_dentist_skill": args.get("min_dentist_skill"),
+            "min_pain_management": args.get("min_pain_management"),
+            "min_cost_value": args.get("min_cost_value"),
+            "min_staff_service": args.get("min_staff_service"),
+            "min_ambiance_cleanliness": args.get("min_ambiance_cleanliness"),
+            "min_convenience": args.get("min_convenience")
+        }
         print(f"AI-extracted filters: {filters}")
     except Exception as e:
-        print(f"AI Planner Error: {e}."); filters = {}
+        print(f"AI Planner Error: {e}.")
+        filters = {}
 
     # STAGE 2: FACTUAL FILTERING
     query_builder = supabase.table('clinics_data').select('id, name, address, township, rating, reviews, embedding, distance, sentiment_overall, sentiment_dentist_skill, sentiment_pain_management, sentiment_cost_value, sentiment_staff_service, sentiment_ambiance_cleanliness, sentiment_convenience')
@@ -80,11 +114,11 @@ def handle_chat(query: UserQuery):
         query_embedding = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")['embedding']
         for clinic in candidate_clinics:
             db_embedding = json.loads(clinic['embedding'])
-            # This now correctly uses numpy
             clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
         ranked_clinics = sorted(candidate_clinics, key=lambda x: x['similarity'], reverse=True)
         top_5_clinics = ranked_clinics[:5]
-    else: top_5_clinics = []
+    else:
+        top_5_clinics = []
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
@@ -100,7 +134,6 @@ def handle_chat(query: UserQuery):
     You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way.
     IMPORTANT RULE: If the user's question or the context provided mentions distance, you MUST append the following sentence to the VERY END of your response, on a new line:
     "(Please note: all distances are measured from the Johor Bahru CIQ complex.)"
-
     CONTEXT:
     {context}
     
