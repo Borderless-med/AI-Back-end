@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
 import json
-from scipy.spatial.distance import cosine
+import numpy as np
+from numpy.linalg import norm
 
 # --- Load environment variables and configure clients ---
 load_dotenv()
@@ -79,7 +80,8 @@ def handle_chat(query: UserQuery):
         query_embedding = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")['embedding']
         for clinic in candidate_clinics:
             db_embedding = json.loads(clinic['embedding'])
-            clinic['similarity'] = 1 - cosine(query_embedding, db_embedding)
+            # This now correctly uses numpy
+            clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
         ranked_clinics = sorted(candidate_clinics, key=lambda x: x['similarity'], reverse=True)
         top_5_clinics = ranked_clinics[:5]
     else: top_5_clinics = []
@@ -94,13 +96,8 @@ def handle_chat(query: UserQuery):
     else:
         context = "I could not find any clinics that matched your specific criteria in the database."
 
-    # <<< CORRECTED DISTANCE NOTE INSTRUCTION >>>
     augmented_prompt = f"""
-    You are a helpful assistant for the SG-JB Dental Platform.
-    Your task is to provide a conversational answer based ONLY on the context.
-    The context contains a list of clinics found after applying specific filters. Use this data to justify your recommendations.
-    Summarize the findings in a confident, helpful way.
-
+    You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way.
     IMPORTANT RULE: If the user's question or the context provided mentions distance, you MUST append the following sentence to the VERY END of your response, on a new line:
     "(Please note: all distances are measured from the Johor Bahru CIQ complex.)"
 
