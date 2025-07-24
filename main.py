@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
-from typing import List # Import the List type for the multi-service fix
+from typing import List
 import json
 import numpy as np
 from numpy.linalg import norm
@@ -28,7 +28,6 @@ class UserQuery(BaseModel): message: str
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
-# <<< BUG FIX #1: The AI Planner can now handle a LIST of services >>>
 class SearchFilters(BaseModel):
     township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
     min_rating: float = Field(None, description="Extract a minimum Google rating. For 'highly-rated' or 'best', use 4.5.")
@@ -63,7 +62,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: DATABASE QUERY (with Fallback Logic and Multi-Service handling)
+    # STAGE 2: DATABASE QUERY (with Fallback Logic)
     all_candidates = {}
     active_filters = {k: v for k, v in filters.items() if v is not None}
 
@@ -123,29 +122,38 @@ def handle_chat(query: UserQuery):
             else: clinic['similarity'] = 0
         ranked_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
         top_5_clinics = ranked_clinics[:5]
-    else:
-        top_5_clinics = []
+    else: top_5_clinics = []
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_5_clinics:
-        context += "Here are the most relevant clinics I found based on your request:\n"
+        context += "Here is the data I found based on your request:\n"
         for clinic in top_5_clinics:
-            # <<< BUG FIX #2: The Comprehensive Context Line >>>
             services_offered = [col.replace('_', ' ') for col in ServiceEnum if clinic.get(col) is True]
             services_text = f"Services: {', '.join(services_offered)}." if services_offered else ""
-            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
+            context += f"- Clinic: {clinic.get('name')}, Location: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
     else:
-        context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
+        context = "I could not find any clinics in the database that matched the search criteria."
     
-    # Conditional Distance Caveat
     distance_rule = ""
     if filters.get('max_distance') or "km" in query.message.lower() or "distance" in query.message.lower():
-        distance_rule = "IMPORTANT RULE: You MUST append the following sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
+        distance_rule = "IMPORTANT: If you mention distance, you MUST append this exact sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
 
+    # <<< THE FINAL UPGRADE: THE GOLD-STANDARD PROMPT >>>
     augmented_prompt = f"""
-    You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way, explaining why each option is a good choice.
+    You are an expert dental clinic assistant for the SG-JB Dental Platform. Your goal is to provide the most helpful, data-driven recommendation possible based ONLY on the context provided.
+
+    **Your Reasoning Process:**
+    1.  Analyze the user's core intent from their question.
+    2.  Examine the list of clinics provided in the context.
+    3.  Identify the "Top Recommendation" by finding the clinic that best matches the user's primary intent (e.g., for "painless", the one with the highest 'Pain' sentiment score).
+    4.  Identify 1-2 "Alternative Options" that are also strong matches.
+    5.  Formulate a response that first presents the Top Recommendation and justifies it with specific data points from the context (rating, specific sentiment scores).
+    6.  Then, present the alternatives and explain why they are good choices.
+    7.  **Crucially, you must correctly interpret NULL/None values. If a sentiment score is not present for a clinic, you must state that 'a specific score was not available' for that aspect. DO NOT interpret a missing score as a good or bad score.**
+
     {distance_rule}
+
     CONTEXT:
     {context}
     
