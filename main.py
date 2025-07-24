@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
-from typing import List # Import the List type
+from typing import List # Import the List type for the multi-service fix
 import json
 import numpy as np
 from numpy.linalg import norm
@@ -28,7 +28,7 @@ class UserQuery(BaseModel): message: str
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
-# UPGRADE #1: The AI Planner can now handle a LIST of services
+# <<< BUG FIX #1: The AI Planner can now handle a LIST of services >>>
 class SearchFilters(BaseModel):
     township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
     min_rating: float = Field(None, description="Extract a minimum Google rating. For 'highly-rated' or 'best', use 4.5.")
@@ -63,7 +63,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: DATABASE QUERY (with Fallback Logic)
+    # STAGE 2: DATABASE QUERY (with Fallback Logic and Multi-Service handling)
     all_candidates = {}
     active_filters = {k: v for k, v in filters.items() if v is not None}
 
@@ -89,16 +89,13 @@ def handle_chat(query: UserQuery):
             query_builder_ideal = query_builder_ideal.gte(db_column, value)
     run_query(query_builder_ideal, "Ideal")
 
-    # UPGRADE #2: Fallback Logic
+    # Fallback Logic
     if len(all_candidates) < 3 and active_filters:
         print("Ideal search returned few results. Trying fallbacks...")
-        
-        # Fallback A: Relax sentiment/service, search by location
         if 'township' in active_filters:
             query_fallback_A = supabase.table('clinics_data').select('*').ilike('address', f"%{active_filters['township']}%")
             run_query(query_fallback_A, "Fallback A - Location Only")
         
-        # Fallback B: Relax location, search by key criteria
         key_filters_to_try = ['services', 'min_pain_management', 'min_dentist_skill']
         query_fallback_B = supabase.table('clinics_data').select('*')
         applied_key_filter = False
@@ -126,24 +123,25 @@ def handle_chat(query: UserQuery):
             else: clinic['similarity'] = 0
         ranked_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
         top_5_clinics = ranked_clinics[:5]
-    else: top_5_clinics = []
+    else:
+        top_5_clinics = []
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_5_clinics:
         context += "Here are the most relevant clinics I found based on your request:\n"
         for clinic in top_5_clinics:
-            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
+            # <<< BUG FIX #2: The Comprehensive Context Line >>>
+            services_offered = [col.replace('_', ' ') for col in ServiceEnum if clinic.get(col) is True]
+            services_text = f"Services: {', '.join(services_offered)}." if services_offered else ""
+            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
     else:
         context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
     
     # Conditional Distance Caveat
     distance_rule = ""
     if filters.get('max_distance') or "km" in query.message.lower() or "distance" in query.message.lower():
-        distance_rule = """
-        IMPORTANT RULE: You MUST append the following sentence to the VERY END of your response, on a new line:
-        "(Please note: all distances are measured from the Johor Bahru CIQ complex.)"
-        """
+        distance_rule = "IMPORTANT RULE: You MUST append the following sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
 
     augmented_prompt = f"""
     You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way, explaining why each option is a good choice.
