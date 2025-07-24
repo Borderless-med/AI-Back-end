@@ -48,24 +48,21 @@ def read_root(): return {"message": "Hello!"}
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
+    # UPGRADE #3: The Engineered Prompt for the AI Planner
     planner_prompt = f"""
-    Analyze the user's query and extract the appropriate search filters.
+    Analyze the user's query and extract appropriate search filters.
     RULES:
-    - For qualitative requests like 'best', 'highly-rated', or 'good', set a minimum score. A good general threshold is 8.0 for skill/staff and 4.5 for Google rating.
-    - The 'min_cost_value' is a sensitive metric. Only set a `min_cost_value` if the user explicitly asks for 'cheap', 'affordable', or 'good value'. A good threshold for this is 7.5.
-    - Always prioritize extracting a `service` if a dental procedure is mentioned.
-    - If you cannot confidently extract any filters, that is okay.
-    - Respond ONLY with the JSON object for the tool.
+    - For 'best', 'highly-rated', or 'good', set a minimum score. Good defaults are 8.0 for skill/staff/pain and 4.5 for Google rating.
+    - For 'cheap', 'affordable', or 'good value', set a `min_cost_value` of 7.5.
+    - Prioritize extracting a `service` if a dental procedure is mentioned.
+    - Respond ONLY with the JSON for the tool.
     USER QUERY: '{query.message}'
     """
 
-    # STAGE 1: AI QUERY PLANNER
-    filters = {} # Start with empty filters
+    # STAGE 1: AI QUERY PLANNER (with robust error handling)
+    filters = {}
     try:
         response = planner_model.generate_content(planner_prompt, tools=[SearchFilters])
-        
-        # <<< THIS IS THE FINAL, ROBUST FIX >>>
-        # We add a safety check to ensure the function_call exists before we use it.
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
             function_call = response.candidates[0].content.parts[0].function_call
             if function_call:
@@ -79,55 +76,93 @@ def handle_chat(query: UserQuery):
                     "min_staff_service": args.get("min_staff_service"), "min_ambiance_cleanliness": args.get("min_ambiance_cleanliness"),
                     "min_convenience": args.get("min_convenience")
                 }
-        
         print(f"AI-extracted filters: {filters}")
-
     except Exception as e:
-        print(f"AI Planner Error: {e}. Proceeding with semantic search only.")
-        filters = {} # If anything goes wrong, we fall back to an empty filter set
+        print(f"AI Planner Error: {e}."); filters = {}
+
+    # STAGE 2: DATABASE QUERY (with new Fallback Logic)
+    all_candidates = {} # Use a dictionary to avoid duplicates
     
-    # (The rest of the Stages 2, 3, and 4 code remains exactly the same)
-    # STAGE 2: FACTUAL FILTERING
-    query_builder = supabase.table('clinics_data').select('id, name, address, township, rating, reviews, embedding, distance, sentiment_overall, sentiment_dentist_skill, sentiment_pain_management, sentiment_cost_value, sentiment_staff_service, sentiment_ambiance_cleanliness, sentiment_convenience')
-    if filters.get('township'): query_builder = query_builder.ilike('township', f"%{filters['township']}%")
-    if filters.get('min_rating'): query_builder = query_builder.gte('rating', filters['min_rating'])
-    if filters.get('service'): query_builder = query_builder.eq(filters['service'], True)
-    if filters.get('max_distance'): query_builder = query_builder.lte('distance', filters['max_distance'])
-    if filters.get('min_dentist_skill'): query_builder = query_builder.gte('sentiment_dentist_skill', filters['min_dentist_skill'])
-    if filters.get('min_pain_management'): query_builder = query_builder.gte('sentiment_pain_management', filters['min_pain_management'])
-    if filters.get('min_cost_value'): query_builder = query_builder.gte('sentiment_cost_value', filters['min_cost_value'])
-    if filters.get('min_staff_service'): query_builder = query_builder.gte('sentiment_staff_service', filters['min_staff_service'])
-    if filters.get('min_ambiance_cleanliness'): query_builder = query_builder.gte('sentiment_ambiance_cleanliness', filters['min_ambiance_cleanliness'])
-    if filters.get('min_convenience'): query_builder = query_builder.gte('sentiment_convenience', filters['min_convenience'])
+    # Helper function for querying
+    def run_query(query_builder, source_name):
+        try:
+            db_response = query_builder.execute()
+            candidates = db_response.data if db_response.data else []
+            print(f"Found {len(candidates)} candidates from '{source_name}' search.")
+            for clinic in candidates:
+                all_candidates[clinic['id']] = clinic # Add to dictionary, automatically handles duplicates
+        except Exception as e:
+            print(f"Database query error for '{source_name}': {e}")
 
-    db_response = query_builder.execute()
-    candidate_clinics = db_response.data if db_response.data else []
-    print(f"Found {len(candidate_clinics)} candidates after factual filtering.")
+    # Query 1: The "Ideal" Strict Search
+    query_builder_ideal = supabase.table('clinics_data').select('*')
+    if filters.get('township'): query_builder_ideal = query_builder_ideal.ilike('township', f"%{filters['township']}%")
+    if filters.get('min_rating'): query_builder_ideal = query_builder_ideal.gte('rating', filters['min_rating'])
+    if filters.get('service'): query_builder_ideal = query_builder_ideal.eq(filters['service'], True)
+    if filters.get('max_distance'): query_builder_ideal = query_builder_ideal.lte('distance', filters['max_distance'])
+    if filters.get('min_dentist_skill'): query_builder_ideal = query_builder_ideal.gte('sentiment_dentist_skill', filters['min_dentist_skill'])
+    # Add all other sentiment filters here...
+    if filters.get('min_pain_management'): query_builder_ideal = query_builder_ideal.gte('sentiment_pain_management', filters['min_pain_management'])
+    if filters.get('min_cost_value'): query_builder_ideal = query_builder_ideal.gte('sentiment_cost_value', filters['min_cost_value'])
+    if filters.get('min_staff_service'): query_builder_ideal = query_builder_ideal.gte('sentiment_staff_service', filters['min_staff_service'])
+    if filters.get('min_ambiance_cleanliness'): query_builder_ideal = query_builder_ideal.gte('sentiment_ambiance_cleanliness', filters['min_ambiance_cleanliness'])
+    if filters.get('min_convenience'): query_builder_ideal = query_builder_ideal.gte('sentiment_convenience', filters['min_convenience'])
+    run_query(query_builder_ideal, "Ideal")
+    
+    # UPGRADE #2: Fallback Logic
+    if len(all_candidates) < 3:
+        print("Ideal search returned few results. Trying fallbacks...")
+        # Fallback A: Relax sentiment/service, search by location
+        if filters.get('township'):
+            query_fallback_A = supabase.table('clinics_data').select('*').ilike('township', f"%{filters['township']}%")
+            run_query(query_fallback_A, "Fallback A - Location")
+        
+        # Fallback B: Relax location, search by key service/sentiment
+        key_filter_applied = False
+        query_fallback_B = supabase.table('clinics_data').select('*')
+        if filters.get('service'):
+            query_fallback_B = query_fallback_B.eq(filters['service'], True)
+            key_filter_applied = True
+        if filters.get('min_pain_management'):
+            query_fallback_B = query_fallback_B.gte('sentiment_pain_management', filters['min_pain_management'])
+            key_filter_applied = True
+        if filters.get('min_dentist_skill'):
+            query_fallback_B = query_fallback_B.gte('sentiment_dentist_skill', filters['min_dentist_skill'])
+            key_filter_applied = True
+        
+        if key_filter_applied:
+            run_query(query_fallback_B, "Fallback B - Key Criteria")
 
-    # STAGE 3: SEMANTIC RANKING
+    candidate_clinics = list(all_candidates.values())
+
+    # STAGE 3: SEMANTIC RANKING (remains the same)
     if candidate_clinics:
         query_embedding = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")['embedding']
         for clinic in candidate_clinics:
-            db_embedding = json.loads(clinic['embedding'])
-            clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
-        ranked_clinics = sorted(candidate_clinics, key=lambda x: x['similarity'], reverse=True)
+            if clinic.get('embedding'):
+                db_embedding = json.loads(clinic['embedding'])
+                clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
+            else:
+                clinic['similarity'] = 0 # Assign low similarity if no embedding
+        ranked_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
         top_5_clinics = ranked_clinics[:5]
     else:
         top_5_clinics = []
 
-    # STAGE 4: FINAL RESPONSE GENERATION
+    # STAGE 4: FINAL RESPONSE GENERATION (with comprehensive context)
     context = ""
     if top_5_clinics:
         context += f"I searched using these filters: {filters}.\n"
         context += "Here are the most relevant clinics I found:\n"
         for clinic in top_5_clinics:
-            context += f"- Name: {clinic.get('name')}, Township: {clinic.get('township')}, Rating: {clinic.get('rating')} stars. Key Sentiment Scores -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain Management: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
+            # UPGRADE #1: The Comprehensive Context Line
+            context += f"- Name: {clinic.get('name')}, Township: {clinic.get('township')}, Rating: {clinic.get('rating')} stars. Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}, Ambiance: {clinic.get('sentiment_ambiance_cleanliness')}, Convenience: {clinic.get('sentiment_convenience')}.\n"
     else:
-        context = "I could not find any clinics that matched your specific criteria in the database."
+        context = "I could not find any clinics that matched your specific criteria, even after broadening my search."
 
     augmented_prompt = f"""
     You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way.
-    IMPORTANT RULE: If the user's question or the context provided mentions distance, you MUST append the following sentence to the VERY END of your response, on a new line:
+    IMPORTANT RULE: If the user's question or the context mentions distance, you MUST append this sentence to the VERY END of your response, on a new line:
     "(Please note: all distances are measured from the Johor Bahru CIQ complex.)"
     CONTEXT:
     {context}
