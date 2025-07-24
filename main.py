@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
-from typing import List # Import the List type for multi-service queries
+from typing import List # Import the List type
 import json
 import numpy as np
 from numpy.linalg import norm
@@ -58,7 +58,7 @@ def handle_chat(query: UserQuery):
             function_call = response.candidates[0].content.parts[0].function_call
             if function_call:
                 args = function_call.args
-                filters = {k: v for k, v in args.items() if v is not None} # Clean empty filters
+                filters = {k: v for k, v in args.items() if v is not None}
         print(f"AI-extracted filters: {filters}")
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
@@ -92,12 +92,13 @@ def handle_chat(query: UserQuery):
     # UPGRADE #2: Fallback Logic
     if len(all_candidates) < 3 and active_filters:
         print("Ideal search returned few results. Trying fallbacks...")
+        
         # Fallback A: Relax sentiment/service, search by location
         if 'township' in active_filters:
             query_fallback_A = supabase.table('clinics_data').select('*').ilike('address', f"%{active_filters['township']}%")
             run_query(query_fallback_A, "Fallback A - Location Only")
         
-        # Fallback B: Relax location, search by key sentiment/service
+        # Fallback B: Relax location, search by key criteria
         key_filters_to_try = ['services', 'min_pain_management', 'min_dentist_skill']
         query_fallback_B = supabase.table('clinics_data').select('*')
         applied_key_filter = False
@@ -136,7 +137,7 @@ def handle_chat(query: UserQuery):
     else:
         context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
     
-    # UPGRADE #3: The Conditional Distance Caveat
+    # Conditional Distance Caveat
     distance_rule = ""
     if filters.get('max_distance') or "km" in query.message.lower() or "distance" in query.message.lower():
         distance_rule = """
