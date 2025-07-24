@@ -70,28 +70,59 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: FACTUAL FILTERING (WITH CORRECTED 'address' SEARCH)
-    query_builder = supabase.table('clinics_data').select('*')
-    
+    # STAGE 2: DATABASE QUERY (with new Fallback Logic)
+    all_candidates = {} # Use a dictionary to store unique clinics by ID
     active_filters = {k: v for k, v in filters.items() if v is not None}
-    
+
+    # Helper function to run queries and add unique results
+    def run_query(query_builder, source_name):
+        try:
+            db_response = query_builder.execute()
+            candidates = db_response.data if db_response.data else []
+            print(f"Found {len(candidates)} candidates from '{source_name}' search.")
+            for clinic in candidates:
+                if clinic['id'] not in all_candidates:
+                    all_candidates[clinic['id']] = clinic
+        except Exception as e:
+            print(f"Database query error for '{source_name}': {e}")
+
+    # Query 1: The "Ideal" Strict Search
+    query_builder_ideal = supabase.table('clinics_data').select('*')
     for key, value in active_filters.items():
-        # <<< THIS IS THE DEFINITIVE FIX >>>
-        if key == 'township':
-            query_builder = query_builder.ilike('address', f"%{value}%") # Search the 'address' column
-        elif key == 'min_rating':
-            query_builder = query_builder.gte('rating', value)
-        elif key == 'service':
-            query_builder = query_builder.eq(value, True)
-        elif key == 'max_distance':
-            query_builder = query_builder.lte('distance', value)
+        if key == 'township': query_builder_ideal = query_builder_ideal.ilike('address', f"%{value}%")
+        elif key == 'min_rating': query_builder_ideal = query_builder_ideal.gte('rating', value)
+        elif key == 'service': query_builder_ideal = query_builder_ideal.eq(value, True)
+        elif key == 'max_distance': query_builder_ideal = query_builder_ideal.lte('distance', value)
         elif key.startswith('min_'):
             db_column = key.replace('min_', 'sentiment_')
-            query_builder = query_builder.gte(db_column, value)
-            
-    db_response = query_builder.execute()
-    candidate_clinics = db_response.data if db_response.data else []
-    print(f"Found {len(candidate_clinics)} candidates after factual filtering.")
+            query_builder_ideal = query_builder_ideal.gte(db_column, value)
+    run_query(query_builder_ideal, "Ideal")
+
+    # Fallback Logic: If the ideal search is too narrow, broaden it
+    if len(all_candidates) < 3:
+        print("Ideal search returned few results. Trying fallbacks...")
+        
+        # Fallback A: Relax sentiment filters, search by location and service
+        if active_filters.get('township') or active_filters.get('service'):
+            query_fallback_A = supabase.table('clinics_data').select('*')
+            if active_filters.get('township'): query_fallback_A = query_fallback_A.ilike('address', f"%{active_filters.get('township')}%")
+            if active_filters.get('service'): query_fallback_A = query_fallback_A.eq(active_filters.get('service'), True)
+            run_query(query_fallback_A, "Fallback A - Location/Service")
+
+        # Fallback B: Relax location, search by key sentiment
+        key_sentiment_filters = ['min_pain_management', 'min_dentist_skill', 'min_staff_service']
+        query_fallback_B = supabase.table('clinics_data').select('*')
+        key_filter_applied = False
+        for key in key_sentiment_filters:
+            if active_filters.get(key):
+                db_column = key.replace('min_', 'sentiment_')
+                query_fallback_B = query_fallback_B.gte(db_column, active_filters.get(key))
+                key_filter_applied = True
+        if key_filter_applied:
+            run_query(query_fallback_B, "Fallback B - Key Sentiment")
+
+    candidate_clinics = list(all_candidates.values())
+    print(f"Found a total of {len(candidate_clinics)} unique candidates after all searches.")
 
     # STAGE 3: SEMANTIC RANKING
     if candidate_clinics:
@@ -113,10 +144,10 @@ def handle_chat(query: UserQuery):
         for clinic in top_5_clinics:
             context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
     else:
-        context = "I could not find any clinics in the database that matched your specific criteria."
+        context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
 
     augmented_prompt = f"""
-    You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way.
+    You are a helpful assistant. Answer the user's question based ONLY on the context. Summarize the findings in a conversational way, explaining why each option is a good choice.
     IMPORTANT RULE: If the user's question or the context mentions distance, you MUST append this sentence to the VERY END of your response, on a new line:
     "(Please note: all distances are measured from the Johor Bahru CIQ complex.)"
     CONTEXT:
