@@ -70,15 +70,15 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: FACTUAL FILTERING (SIMPLIFIED AND CORRECTED)
+    # STAGE 2: FACTUAL FILTERING (WITH CORRECTED 'address' SEARCH)
     query_builder = supabase.table('clinics_data').select('*')
     
-    # Apply only the filters that the AI actually extracted
     active_filters = {k: v for k, v in filters.items() if v is not None}
     
     for key, value in active_filters.items():
+        # <<< THIS IS THE DEFINITIVE FIX >>>
         if key == 'township':
-            query_builder = query_builder.ilike('township', f"%{value}%")
+            query_builder = query_builder.ilike('address', f"%{value}%") # Search the 'address' column
         elif key == 'min_rating':
             query_builder = query_builder.gte('rating', value)
         elif key == 'service':
@@ -111,7 +111,7 @@ def handle_chat(query: UserQuery):
     if top_5_clinics:
         context += "Here are the most relevant clinics I found based on your request:\n"
         for clinic in top_5_clinics:
-            context += f"- Name: {clinic.get('name')}, Township: {clinic.get('township')}, Rating: {clinic.get('rating')} stars. Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
+            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
     else:
         context = "I could not find any clinics in the database that matched your specific criteria."
 
