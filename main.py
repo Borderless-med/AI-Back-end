@@ -18,9 +18,10 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- AI Models ---
+# --- AI Models (with new embedding model) ---
 planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-embedding_model = 'models/embedding-001'
+# <<< THE UPGRADE: Use the new, superior embedding model >>>
+embedding_model = 'models/gemini-embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- Pydantic Data Models & Enum ---
@@ -114,7 +115,15 @@ def handle_chat(query: UserQuery):
 
     # STAGE 3: SEMANTIC RANKING
     if candidate_clinics:
-        query_embedding = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")['embedding']
+        # Now we create the query embedding using the new model
+        query_embedding_response = genai.embed_content(
+            model=embedding_model,
+            content=query.message,
+            task_type="RETRIEVAL_QUERY",
+            output_dimensionality=768 # Ensure consistency
+        )
+        query_embedding = query_embedding_response['embedding']
+        
         for clinic in candidate_clinics:
             if clinic.get('embedding'):
                 db_embedding = json.loads(clinic['embedding'])
@@ -122,35 +131,34 @@ def handle_chat(query: UserQuery):
             else: clinic['similarity'] = 0
         ranked_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
         top_5_clinics = ranked_clinics[:5]
-    else: top_5_clinics = []
+    else:
+        top_5_clinics = []
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_5_clinics:
-        context += "Here is the data I found based on your request:\n"
+        context += "Here are the most relevant clinics I found based on your request:\n"
         for clinic in top_5_clinics:
             services_offered = [col.replace('_', ' ') for col in ServiceEnum if clinic.get(col) is True]
             services_text = f"Services: {', '.join(services_offered)}." if services_offered else ""
-            context += f"- Clinic: {clinic.get('name')}, Location: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}, Staff: {clinic.get('sentiment_staff_service')}, Value: {clinic.get('sentiment_cost_value')}.\n"
+            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
     else:
-        context = "I could not find any clinics in the database that matched the search criteria."
+        context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
     
     distance_rule = ""
     if filters.get('max_distance') or "km" in query.message.lower() or "distance" in query.message.lower():
-        distance_rule = "IMPORTANT: If you mention distance, you MUST append this exact sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
+        distance_rule = "IMPORTANT RULE: You MUST append the following sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
 
-    # <<< THE FINAL UPGRADE: THE GOLD-STANDARD PROMPT >>>
     augmented_prompt = f"""
-    You are an expert dental clinic assistant for the SG-JB Dental Platform. Your goal is to provide the most helpful, data-driven recommendation possible based ONLY on the context provided.
-
+    You are an expert dental clinic assistant. Your goal is to provide the most helpful, data-driven recommendation possible based ONLY on the context provided.
     **Your Reasoning Process:**
-    1.  Analyze the user's core intent from their question.
-    2.  Examine the list of clinics provided in the context.
-    3.  Identify the "Top Recommendation" by finding the clinic that best matches the user's primary intent (e.g., for "painless", the one with the highest 'Pain' sentiment score).
-    4.  Identify 1-2 "Alternative Options" that are also strong matches.
-    5.  Formulate a response that first presents the Top Recommendation and justifies it with specific data points from the context (rating, specific sentiment scores).
-    6.  Then, present the alternatives and explain why they are good choices.
-    7.  **Crucially, you must correctly interpret NULL/None values. If a sentiment score is not present for a clinic, you must state that 'a specific score was not available' for that aspect. DO NOT interpret a missing score as a good or bad score.**
+    1. Analyze the user's core intent from their question.
+    2. Examine the list of clinics provided in the context.
+    3. Identify the "Top Recommendation" by finding the clinic that best matches the user's primary intent.
+    4. Identify 1-2 "Alternative Options" that are also strong matches.
+    5. Formulate a response that first presents the Top Recommendation and justifies it with specific data points from the context.
+    6. Then, present the alternatives and explain why they are good choices.
+    7. **Crucially, you must correctly interpret NULL/None values. If a sentiment score is not present, you must state that 'a specific score was not available' for that aspect.**
 
     {distance_rule}
 
