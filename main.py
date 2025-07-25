@@ -18,9 +18,8 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- AI Models (with new embedding model) ---
+# --- AI Models ---
 planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-# <<< THE UPGRADE: Use the new, superior embedding model >>>
 embedding_model = 'models/gemini-embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
@@ -32,14 +31,8 @@ class ServiceEnum(str, Enum):
 class SearchFilters(BaseModel):
     township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
     min_rating: float = Field(None, description="Extract a minimum Google rating. For 'highly-rated' or 'best', use 4.5.")
-    services: List[ServiceEnum] = Field(None, description="Extract a list of all specific dental services requested.")
+    services: List[ServiceEnum] = Field(None, description="Extract a list of all specific dental services if and only if the user explicitly names them from the known list.")
     max_distance: float = Field(None, description="Extract a maximum distance in kilometers (km).")
-    min_dentist_skill: float = Field(None, description="For queries about 'best skill' or 'professional' dentists, set this to 8.0.")
-    min_pain_management: float = Field(None, description="For queries about 'painless' or 'gentle' treatment, set this to 8.0.")
-    min_cost_value: float = Field(None, description="For queries about 'cheap', 'affordable', or 'good value', set this to 7.5.")
-    min_staff_service: float = Field(None, description="For queries about 'friendly staff' or 'good service', set this to 8.0.")
-    min_ambiance_cleanliness: float = Field(None, description="For queries about 'clean' or 'modern' clinics, set this to 8.0.")
-    min_convenience: float = Field(None, description="For queries about 'on time' or 'easy booking', set this to 8.0.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -50,7 +43,7 @@ def read_root(): return {"message": "Hello!"}
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: AI QUERY PLANNER
+    # STAGE 1: AI QUERY PLANNER (Simplified for reliability)
     filters = {}
     try:
         response = planner_model.generate_content(query.message, tools=[SearchFilters])
@@ -59,80 +52,58 @@ def handle_chat(query: UserQuery):
             if function_call:
                 args = function_call.args
                 filters = {k: v for k, v in args.items() if v is not None}
-        print(f"AI-extracted filters: {filters}")
+        print(f"AI-extracted factual filters: {filters}")
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: DATABASE QUERY (with Fallback Logic)
-    all_candidates = {}
-    active_filters = {k: v for k, v in filters.items() if v is not None}
+    # STAGE 2: THE NEW "SEMANTIC-FIRST" SEARCH STRATEGY
+    candidate_clinics = []
+    
+    print("Performing initial semantic search...")
+    query_embedding_response = genai.embed_content(
+        model=embedding_model,
+        content=query.message,
+        task_type="RETRIEVAL_QUERY",
+        output_dimensionality=768
+    )
+    query_embedding = query_embedding_response['embedding']
+    
+    try:
+        db_response = supabase.rpc('match_clinics_semantic', {
+            'query_embedding': query_embedding,
+            'match_count': 15
+        }).execute()
+        candidate_clinics = db_response.data if db_response.data else []
+        print(f"Found {len(candidate_clinics)} candidates from semantic search.")
+    except Exception as e:
+        print(f"Semantic search DB function error: {e}")
 
-    def run_query(query_builder, source_name):
-        try:
-            db_response = query_builder.execute()
-            candidates = db_response.data if db_response.data else []
-            print(f"Found {len(candidates)} candidates from '{source_name}' search.")
-            for clinic in candidates:
-                if clinic['id'] not in all_candidates: all_candidates[clinic['id']] = clinic
-        except Exception as e: print(f"DB query error for '{source_name}': {e}")
-
-    # Query 1: The "Ideal" Strict Search
-    query_builder_ideal = supabase.table('clinics_data').select('*')
-    for key, value in active_filters.items():
-        if key == 'township': query_builder_ideal = query_builder_ideal.ilike('address', f"%{value}%")
-        elif key == 'services':
-            for service in value: query_builder_ideal = query_builder_ideal.eq(service, True)
-        elif key == 'min_rating': query_builder_ideal = query_builder_ideal.gte('rating', value)
-        elif key == 'max_distance': query_builder_ideal = query_builder_ideal.lte('distance', value)
-        elif key.startswith('min_'):
-            db_column = key.replace('min_', 'sentiment_')
-            query_builder_ideal = query_builder_ideal.gte(db_column, value)
-    run_query(query_builder_ideal, "Ideal")
-
-    # Fallback Logic
-    if len(all_candidates) < 3 and active_filters:
-        print("Ideal search returned few results. Trying fallbacks...")
-        if 'township' in active_filters:
-            query_fallback_A = supabase.table('clinics_data').select('*').ilike('address', f"%{active_filters['township']}%")
-            run_query(query_fallback_A, "Fallback A - Location Only")
-        
-        key_filters_to_try = ['services', 'min_pain_management', 'min_dentist_skill']
-        query_fallback_B = supabase.table('clinics_data').select('*')
-        applied_key_filter = False
-        for key in key_filters_to_try:
-            if key in active_filters:
-                applied_key_filter = True
-                value = active_filters[key]
-                if key == 'services':
-                    for service in value: query_fallback_B = query_fallback_B.eq(service, True)
-                else:
-                    db_column = key.replace('min_', 'sentiment_')
-                    query_fallback_B = query_fallback_B.gte(db_column, value)
-        if applied_key_filter: run_query(query_fallback_B, "Fallback B - Key Criteria Only")
-
-    candidate_clinics = list(all_candidates.values())
-    print(f"Found a total of {len(candidate_clinics)} unique candidates after all searches.")
-
-    # STAGE 3: SEMANTIC RANKING
+    # STAGE 3: FACTUAL RE-RANKING AND FILTERING
+    final_candidates = []
     if candidate_clinics:
-        # Now we create the query embedding using the new model
-        query_embedding_response = genai.embed_content(
-            model=embedding_model,
-            content=query.message,
-            task_type="RETRIEVAL_QUERY",
-            output_dimensionality=768 # Ensure consistency
-        )
-        query_embedding = query_embedding_response['embedding']
+        active_filters = {k: v for k, v in filters.items() if v is not None}
         
-        for clinic in candidate_clinics:
-            if clinic.get('embedding'):
-                db_embedding = json.loads(clinic['embedding'])
-                clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
-            else: clinic['similarity'] = 0
-        ranked_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
-        top_5_clinics = ranked_clinics[:5]
-    else:
-        top_5_clinics = []
+        if active_filters:
+            for clinic in candidate_clinics:
+                match = True
+                if active_filters.get('township') and active_filters.get('township').lower() not in clinic.get('address', '').lower():
+                    match = False
+                if active_filters.get('min_rating') and clinic.get('rating', 0) < active_filters.get('min_rating'):
+                    match = False
+                if active_filters.get('services'):
+                    for service in active_filters.get('services'):
+                        if not clinic.get(service, False):
+                            match = False; break
+                if active_filters.get('max_distance') and clinic.get('distance', 999) > active_filters.get('max_distance'):
+                    match = False
+                
+                if match:
+                    final_candidates.append(clinic)
+        else:
+            final_candidates = candidate_clinics
+    
+    print(f"Found {len(final_candidates)} candidates after applying factual filters.")
+    top_5_clinics = final_candidates[:5]
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
@@ -143,25 +114,11 @@ def handle_chat(query: UserQuery):
             services_text = f"Services: {', '.join(services_offered)}." if services_offered else ""
             context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
     else:
-        context = "I could not find any clinics in the database that matched your specific criteria, even after broadening my search."
-    
-    distance_rule = ""
-    if filters.get('max_distance') or "km" in query.message.lower() or "distance" in query.message.lower():
-        distance_rule = "IMPORTANT RULE: You MUST append the following sentence to the VERY END of your response, on a new line: \"(Please note: all distances are measured from the Johor Bahru CIQ complex.)\""
+        context = "I could not find any clinics that matched your search criteria."
 
     augmented_prompt = f"""
     You are an expert dental clinic assistant. Your goal is to provide the most helpful, data-driven recommendation possible based ONLY on the context provided.
-    **Your Reasoning Process:**
-    1. Analyze the user's core intent from their question.
-    2. Examine the list of clinics provided in the context.
-    3. Identify the "Top Recommendation" by finding the clinic that best matches the user's primary intent.
-    4. Identify 1-2 "Alternative Options" that are also strong matches.
-    5. Formulate a response that first presents the Top Recommendation and justifies it with specific data points from the context.
-    6. Then, present the alternatives and explain why they are good choices.
-    7. **Crucially, you must correctly interpret NULL/None values. If a sentiment score is not present, you must state that 'a specific score was not available' for that aspect.**
-
-    {distance_rule}
-
+    You must correctly interpret NULL/None values. If a sentiment score is not present, state that 'a specific score was not available'. DO NOT interpret a missing score as a good or bad score.
     CONTEXT:
     {context}
     
