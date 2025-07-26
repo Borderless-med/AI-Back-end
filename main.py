@@ -43,7 +43,7 @@ def read_root(): return {"message": "Hello!"}
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: AI QUERY PLANNER (Simplified for reliability)
+    # STAGE 1: AI QUERY PLANNER
     filters = {}
     try:
         response = planner_model.generate_content(query.message, tools=[SearchFilters])
@@ -56,7 +56,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: THE NEW "SEMANTIC-FIRST" SEARCH STRATEGY
+    # STAGE 2: "SEMANTIC-FIRST" SEARCH
     candidate_clinics = []
     
     print("Performing initial semantic search...")
@@ -71,18 +71,20 @@ def handle_chat(query: UserQuery):
     try:
         db_response = supabase.rpc('match_clinics_semantic', {
             'query_embedding': query_embedding,
-            'match_count': 15
+            'match_count': 20 # Get a larger pool of 20 semantic candidates
         }).execute()
         candidate_clinics = db_response.data if db_response.data else []
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: FACTUAL RE-RANKING AND FILTERING
+    # STAGE 3: FACTUAL FILTERING AND RANKING
     final_candidates = []
     if candidate_clinics:
         active_filters = {k: v for k, v in filters.items() if v is not None}
         
+        # <<< THIS IS THE DEFINITIVE BUG FIX >>>
+        # If there are hard filters, apply them to the semantic list.
         if active_filters:
             for clinic in candidate_clinics:
                 match = True
@@ -99,11 +101,20 @@ def handle_chat(query: UserQuery):
                 
                 if match:
                     final_candidates.append(clinic)
+        # If there are NO hard filters, then ALL semantic candidates are final candidates.
         else:
             final_candidates = candidate_clinics
     
     print(f"Found {len(final_candidates)} candidates after applying factual filters.")
-    top_5_clinics = final_candidates[:5]
+    
+    # We will now rank the final candidates by their sentiment scores
+    # This is a more robust way to define "quality" for general queries
+    if final_candidates:
+        ranked_clinics = sorted(final_candidates, key=lambda x: (x.get('sentiment_overall', 0) or 0, x.get('sentiment_dentist_skill', 0) or 0), reverse=True)
+        top_5_clinics = ranked_clinics[:5]
+    else:
+        top_5_clinics = []
+
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
