@@ -30,17 +30,9 @@ class ServiceEnum(str, Enum):
 
 class SearchFilters(BaseModel):
     township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
-    min_rating: float = Field(None, description="Extract a minimum Google rating. For 'highly-rated' or 'best', use 4.5.")
-    services: List[ServiceEnum] = Field(None, description="Extract a list of all specific dental services if and only if the user explicitly names them from the known list.")
+    min_rating: float = Field(None, description="Extract a minimum Google rating if specified.")
+    services: List[ServiceEnum] = Field(None, description="Extract a list of specific, specialized dental services if explicitly named by the user from the known list.")
     max_distance: float = Field(None, description="Extract a maximum distance in kilometers (km).")
-    # New: These are now used to guide the ranking, not just filter
-    min_dentist_skill: float = Field(None, description="For queries about 'best skill' or 'professional' dentists, set this to 8.0.")
-    min_pain_management: float = Field(None, description="For queries about 'painless' or 'gentle' treatment, set this to 8.0.")
-    min_cost_value: float = Field(None, description="For queries about 'cheap', 'affordable', or 'good value', set this to 7.5.")
-    min_staff_service: float = Field(None, description="For queries about 'friendly staff' or 'good service', set this to 8.0.")
-    min_ambiance_cleanliness: float = Field(None, description="For queries about 'clean' or 'modern' clinics, set this to 8.0.")
-    min_convenience: float = Field(None, description="For queries about 'on time' or 'easy booking', set this to 8.0.")
-
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -64,78 +56,56 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"AI Planner Error: {e}."); filters = {}
     
-    # STAGE 2: "SEMANTIC-FIRST" SEARCH
+    # STAGE 2: "FILTER-THEN-RANK" with SEMANTIC FALLBACK
     candidate_clinics = []
     
-    print("Performing initial semantic search...")
-    query_embedding_response = genai.embed_content(
-        model=embedding_model,
-        content=query.message,
-        task_type="RETRIEVAL_QUERY",
-        output_dimensionality=768
-    )
-    query_embedding = query_embedding_response['embedding']
-    
-    try:
-        db_response = supabase.rpc('match_clinics_simple', {
-            'query_embedding': query_embedding,
-            'match_count': 25 # Get a slightly larger pool for better ranking
-        }).execute()
+    # Path A: If hard filters are found, run a filtered search first.
+    if filters:
+        print("Hard filters detected. Running Filter-then-Rank strategy...")
+        query_builder = supabase.table('clinics_data').select('*')
+        
+        if filters.get('township'):
+            query_builder = query_builder.ilike('address', f"%{filters['township']}%")
+        if filters.get('min_rating'):
+            query_builder = query_builder.gte('rating', filters['min_rating'])
+        if filters.get('services'):
+            for service in filters['services']:
+                query_builder = query_builder.eq(service, True)
+        if filters.get('max_distance'):
+            query_builder = query_builder.lte('distance', filters['max_distance'])
+        
+        db_response = query_builder.execute()
         candidate_clinics = db_response.data if db_response.data else []
-        print(f"Found {len(candidate_clinics)} candidates from semantic search.")
-    except Exception as e:
-        print(f"Semantic search DB function error: {e}")
+        print(f"Found {len(candidate_clinics)} candidates after factual filtering.")
 
-    # STAGE 3: FACTUAL FILTERING AND DYNAMIC RANKING
-    final_candidates = []
-    if candidate_clinics:
-        active_filters = {k: v for k, v in filters.items() if v is not None}
-        
-        # First, apply any hard filters
-        if active_filters:
+        # After filtering, we rank the results semantically
+        if candidate_clinics:
+            query_embedding = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY", output_dimensionality=768)['embedding']
             for clinic in candidate_clinics:
-                match = True
-                if active_filters.get('township') and active_filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
-                if active_filters.get('min_rating') and (clinic.get('rating') is None or clinic.get('rating', 0) < active_filters.get('min_rating')): match = False
-                if active_filters.get('services'):
-                    for service in active_filters.get('services'):
-                        if not clinic.get(service, False): match = False; break
-                if active_filters.get('max_distance') and (clinic.get('distance') is None or clinic.get('distance', 999) > active_filters.get('max_distance')): match = False
-                
-                if match:
-                    final_candidates.append(clinic)
-        else:
-            final_candidates = candidate_clinics
-    
-    print(f"Found {len(final_candidates)} candidates after applying factual filters.")
-    
-    # <<< THE FINAL UPGRADE: DYNAMIC RANKING BRAIN >>>
-    if final_candidates:
-        # Define the priority of sentiment scores based on the AI planner's output
-        ranking_priority = []
-        if filters.get('min_convenience'): ranking_priority.append('sentiment_convenience')
-        if filters.get('min_dentist_skill'): ranking_priority.append('sentiment_dentist_skill')
-        if filters.get('min_pain_management'): ranking_priority.append('sentiment_pain_management')
-        if filters.get('min_cost_value'): ranking_priority.append('sentiment_cost_value')
-        if filters.get('min_staff_service'): ranking_priority.append('sentiment_staff_service')
+                if clinic.get('embedding'):
+                    db_embedding = json.loads(clinic['embedding'])
+                    clinic['similarity'] = np.dot(query_embedding, db_embedding) / (norm(query_embedding) * norm(db_embedding))
+                else: clinic['similarity'] = 0
+            candidate_clinics = sorted(candidate_clinics, key=lambda x: x.get('similarity', 0), reverse=True)
+
+    # Path B: If NO hard filters, or if Path A returned no results, run a pure semantic search.
+    if not candidate_clinics:
+        print("No hard filters or zero results from filtering. Running pure Semantic Search as fallback...")
+        query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY", output_dimensionality=768)
+        query_embedding = query_embedding_response['embedding']
         
-        # If no specific sentiment was requested, use a default quality ranking
-        if not ranking_priority:
-            ranking_priority = ['sentiment_overall', 'sentiment_dentist_skill', 'rating', 'reviews']
-        else:
-            # Always add these as tie-breakers
-            ranking_priority.extend(['sentiment_overall', 'rating', 'reviews'])
+        try:
+            db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 10}).execute()
+            candidate_clinics = db_response.data if db_response.data else []
+            print(f"Found {len(candidate_clinics)} candidates from semantic fallback search.")
+            # For general queries, a final sort by quality is helpful
+            candidate_clinics = sorted(candidate_clinics, key=lambda x: (x.get('sentiment_overall', 0) or 0, x.get('rating', 0) or 0), reverse=True)
+        except Exception as e:
+            print(f"Semantic search DB function error: {e}")
 
-        print(f"Dynamic ranking priority: {ranking_priority}")
-        
-        # Create a dynamic sorting key tuple from the priority list
-        ranked_clinics = sorted(final_candidates, key=lambda x: tuple(x.get(key, 0) or 0 for key in ranking_priority), reverse=True)
-        top_5_clinics = ranked_clinics[:5]
-    else:
-        top_5_clinics = []
+    top_5_clinics = candidate_clinics[:5]
 
-
-    # STAGE 4: FINAL RESPONSE GENERATION
+    # STAGE 3: FINAL RESPONSE GENERATION
     context = ""
     if top_5_clinics:
         context += "Here are the best matches I found for your request:\n"
@@ -144,12 +114,12 @@ def handle_chat(query: UserQuery):
             services_text = f"Services offered: {', '.join(services_offered)}." if services_offered else ""
             context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Key Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
     else:
-        context = "I could not find any clinics that matched your search criteria."
+        context = "I could not find any clinics that matched your search criteria in the database."
 
     augmented_prompt = f"""
     You are an expert dental clinic assistant. Your goal is to provide a helpful, data-driven recommendation based ONLY on the context provided.
-    Synthesize the data into a conversational answer. Explain WHY the clinics are a good match for the user's specific priorities.
-    You must correctly interpret NULL/None values. If a sentiment score is not present, state that 'a specific score was not available'. DO NOT interpret a missing score as a good or bad score.
+    Synthesize the data into a conversational answer. Explain WHY the clinics are a good match.
+    If the context is empty, politely state that no matches were found.
     CONTEXT:
     {context}
     
