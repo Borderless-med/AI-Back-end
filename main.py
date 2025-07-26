@@ -69,7 +69,7 @@ def handle_chat(query: UserQuery):
     query_embedding = query_embedding_response['embedding']
     
     try:
-        db_response = supabase.rpc('match_clinics_semantic', {
+        db_response = supabase.rpc('match_clinics_simple', {
             'query_embedding': query_embedding,
             'match_count': 20 # Get a larger pool of 20 semantic candidates
         }).execute()
