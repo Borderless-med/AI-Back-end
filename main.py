@@ -71,7 +71,7 @@ def handle_chat(query: UserQuery):
     try:
         db_response = supabase.rpc('match_clinics_simple', {
             'query_embedding': query_embedding,
-            'match_count': 20 # Get a larger pool of 20 semantic candidates
+            'match_count': 20
         }).execute()
         candidate_clinics = db_response.data if db_response.data else []
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
@@ -83,47 +83,45 @@ def handle_chat(query: UserQuery):
     if candidate_clinics:
         active_filters = {k: v for k, v in filters.items() if v is not None}
         
-        # <<< THIS IS THE DEFINITIVE BUG FIX >>>
-        # If there are hard filters, apply them to the semantic list.
         if active_filters:
             for clinic in candidate_clinics:
                 match = True
                 if active_filters.get('township') and active_filters.get('township').lower() not in clinic.get('address', '').lower():
                     match = False
-                if active_filters.get('min_rating') and clinic.get('rating', 0) < active_filters.get('min_rating'):
+                if active_filters.get('min_rating') and (clinic.get('rating') is None or clinic.get('rating', 0) < active_filters.get('min_rating')):
                     match = False
                 if active_filters.get('services'):
                     for service in active_filters.get('services'):
                         if not clinic.get(service, False):
                             match = False; break
-                if active_filters.get('max_distance') and clinic.get('distance', 999) > active_filters.get('max_distance'):
+                if active_filters.get('max_distance') and (clinic.get('distance') is None or clinic.get('distance', 999) > active_filters.get('max_distance')):
                     match = False
                 
                 if match:
                     final_candidates.append(clinic)
-        # If there are NO hard filters, then ALL semantic candidates are final candidates.
         else:
             final_candidates = candidate_clinics
     
     print(f"Found {len(final_candidates)} candidates after applying factual filters.")
     
-    # We will now rank the final candidates by their sentiment scores
-    # This is a more robust way to define "quality" for general queries
     if final_candidates:
         ranked_clinics = sorted(final_candidates, key=lambda x: (x.get('sentiment_overall', 0) or 0, x.get('sentiment_dentist_skill', 0) or 0), reverse=True)
         top_5_clinics = ranked_clinics[:5]
     else:
         top_5_clinics = []
 
-
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_5_clinics:
         context += "Here are the most relevant clinics I found based on your request:\n"
         for clinic in top_5_clinics:
+            # <<< THIS IS THE FINAL, DEFINITIVE FIX >>>
+            # Dynamically build the list of services for the context
             services_offered = [col.replace('_', ' ') for col in ServiceEnum if clinic.get(col) is True]
-            services_text = f"Services: {', '.join(services_offered)}." if services_offered else ""
-            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
+            services_text = f"Services offered: {', '.join(services_offered)}." if services_offered else ""
+            
+            # Add the complete and rich context line
+            context += f"- Name: {clinic.get('name')}, Address: {clinic.get('address')}, Rating: {clinic.get('rating')} stars. {services_text} Key Sentiments -> Skill: {clinic.get('sentiment_dentist_skill')}, Pain: {clinic.get('sentiment_pain_management')}.\n"
     else:
         context = "I could not find any clinics that matched your search criteria."
 
