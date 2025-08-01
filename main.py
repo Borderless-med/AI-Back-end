@@ -117,6 +117,15 @@ def handle_chat(query: UserQuery):
         query_embedding = query_embedding_response['embedding']
         db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 25}).execute()
         candidate_clinics = db_response.data if db_response.data else []
+
+
+    # --- ADD THIS TEMPORARY CODE FOR DIAGNOSTICS ---
+        if candidate_clinics:
+            candidate_names = [clinic.get('name') for clinic in candidate_clinics]
+            print(f"INITIAL CANDIDATES (pre-ranking): {candidate_names}")
+        # --- END OF TEMPORARY CODE ---
+
+
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
