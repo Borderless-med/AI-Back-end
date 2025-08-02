@@ -20,9 +20,9 @@ supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
 planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-ranking_model = genai.Generativeai.GenerativeModel('gemini-1.5-flash-latest') 
+ranking_model = genai.GenerativeModel('gemini-1.5-flash-latest') 
 embedding_model = 'models/embedding-001'
-generation_model = genai.Generativeai.GenerativeModel('gemini-1.5-flash-latest')
+generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel):
@@ -77,7 +77,6 @@ def handle_chat(query: UserQuery):
         print(f"Semantic Brain Error: {e}.")
         ranking_priority_dicts = []
 
-    # *** THIS IS THE FIX: Convert list of dictionaries to list of strings ***
     ranking_priority = [item['column'] for item in ranking_priority_dicts if isinstance(item, dict) and 'column' in item]
     print(f"Extracted ranking priority list: {ranking_priority}")
 
@@ -97,13 +96,11 @@ def handle_chat(query: UserQuery):
     # STAGE 3: REVISED FILTERING AND "OBJECTIVE-FIRST" RANKING
     qualified_clinics = []
     if candidate_clinics:
-        # Step 3A: The Quality Gate Filter
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
-        # Step 3B: Apply Factual Filters (if any)
         if filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
@@ -119,7 +116,6 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # Step 3C: THE "OBJECTIVE-FIRST" RANKING LOGIC
         objective_keys = ['rating', 'reviews']
         final_ranking_keys = objective_keys + ranking_priority
         final_ranking_keys = list(dict.fromkeys(final_ranking_keys))
@@ -170,8 +166,4 @@ def handle_chat(query: UserQuery):
     5.  **Closing:** End the entire response by asking an engaging follow-up question, like "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
     """
     final_response = generation_model.generate_content(augmented_prompt)
-    return {"response": final_response.text}```
-
-4.  **Save the file.**
-
-This corrected version properly handles the new data structure from the AI and should resolve the 500 error. Please commit and push this version to Render.
+    return {"response": final_response.text}
