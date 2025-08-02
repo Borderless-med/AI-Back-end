@@ -50,19 +50,20 @@ def handle_chat(query: UserQuery):
     # STAGE 1: FACTUAL BRAIN (No changes needed)
     filters = {}
     
-    # STAGE 2: SEMANTIC SEARCH (No changes needed)
+    # STAGE 2: "WIDER NET" SEMANTIC SEARCH
     candidate_clinics = []
-    print("Performing initial semantic search...")
+    print("Performing initial semantic search with a wider net...")
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
         query_embedding = query_embedding_response['embedding']
-        db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 25}).execute()
+        # *** THE KEY CHANGE IS HERE: match_count is now 75 ***
+        db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 75}).execute()
         candidate_clinics = db_response.data if db_response.data else []
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: THE FINAL FILTERING AND RANKING LOGIC
+    # STAGE 3: FILTERING AND WEIGHTED SCORE RANKING
     qualified_clinics = []
     if candidate_clinics:
         # Step 3A: The Quality Gate Filter
@@ -73,21 +74,15 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # Step 3B: THE NEW WEIGHTED SCORE RANKING
+        # Step 3B: THE WEIGHTED SCORE RANKING
         print("Calculating weighted quality scores...")
         max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
         
         for clinic in qualified_clinics:
-            # Normalize rating (1-5 scale) to a 0-1 score
             norm_rating = (clinic.get('rating', 0) - 1) / 4.0
-            
-            # Normalize review count using a log scale to balance its impact
             norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
-            
-            # Weighted score: 65% rating, 35% review confidence/popularity
             clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
         
-        # Sort by the new, more nuanced quality score
         ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         top_clinics = ranked_clinics[:5]
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
@@ -110,7 +105,7 @@ def handle_chat(query: UserQuery):
 
     # This is the final, most strict and detailed prompt.
     augmented_prompt = f"""
-    You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must emulate the exact style, tone, and formatting of the provided example.
+    You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must exactly emulate the formatting shown in the EXAMPLE below.
 
     **USER'S ORIGINAL QUESTION:**
     {query.message}
@@ -130,29 +125,35 @@ def handle_chat(query: UserQuery):
     **2. Clinic Recommendations Block:**
     You will list the clinics using the following formatting rules precisely.
 
-    *   **Structure & Emojis:** Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternatives:" as a single heading for all subsequent clinics.
-    *   **Layout:** The emoji, category title (for the first clinic only), and clinic **name in bold** MUST all be on the same line.
-    *   **Details:** Below the header line, list the following on separate lines: Rating (with a ★ symbol and review count), Address, Hours, and Website (if available).
-    *   **Summarize Hours:** You MUST summarize the operating hours concisely. Do not list every day individually. Use ranges like "Mon-Fri: 9 AM - 6 PM, Sat: 9 AM - 5 PM, Sun: Closed".
-    *   **Justification:** Include a "Why it's great:" line where you briefly synthesize why it's a good match.
-    *   **SPACING: CRITICAL! You MUST add a single blank line between each full clinic recommendation block to ensure readability.**
+    **--- EXAMPLE OF PERFECT FORMATTING ---**
+    Based on your criteria, here are my top recommendations:
 
-    **--- EXAMPLE OF PERFECT FORMATTING FOR ONE CLINIC ---**
     🏆 Top Choice: **CK Dental (Taman Abad)**
     Rating: 5.0★ (294 reviews)
     Address: 320, Jalan Dato Sulaiman, Taman Abad
     Hours: Mon-Fri: 9:30 AM – 6:30 PM, Weekends: 9:30 AM – 5:00 PM
     Website: [URL]
     Why it's great: Perfect 5-star rating with nearly 300 reviews, making it ideal for convenience and quality.
+
+    🌟 Excellent Alternatives:
     
-    *(...a blank line would follow here...)*
+    **Asiaa Dental Clinic**
+    Rating: 5.0★ (292 reviews)
+    Address: 113A, Jalan Perisai, Taman Sri Tebrau
+    Hours: Daily: 9:00 AM – 9:00 PM
+    Website: [URL]
+    Why it's great: Extended operating hours until 9 PM every day - perfect for convenience!
+    
+    *(...a blank line would follow here before the next clinic...)*
     ---
-
-    **3. Final Summary Paragraph:**
-    After listing all clinics, you MUST include a conclusive "💡 My Recommendation:" summary paragraph. In this paragraph, synthesize your findings and give a final, definitive recommendation to the user, explaining your reasoning.
-
-    **4. Closing Question:**
-    End the entire response by asking: "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
+    
+    **MANDATORY FORMATTING RULES:**
+    - Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternatives:" as a single heading for all subsequent clinics.
+    - The "Top Choice" header (emoji, title, name) is all on one line. For "Excellent Alternatives," the heading is on one line and the bolded clinic name is on the line below it.
+    - You MUST summarize operating hours concisely (e.g., "Mon-Fri: 9 AM - 6 PM"). Do not list every day individually.
+    - **CRITICAL: You MUST place a single blank line between each clinic's full recommendation block.**
+    - After listing all clinics, include a summary paragraph titled "💡 My Recommendation:".
+    - End the entire response with the question: "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
     """
     final_response = generation_model.generate_content(augmented_prompt)
     return {"response": final_response.text}
