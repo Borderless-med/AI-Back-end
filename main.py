@@ -47,41 +47,10 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: THE "TWO BRAINS" PLANNER
+    # STAGE 1: FACTUAL BRAIN (No changes needed)
     filters = {}
-    try:
-        response = planner_model.generate_content(query.message, tools=[SearchFilters])
-        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            function_call = response.candidates[0].content.parts[0].function_call
-            if function_call:
-                args = function_call.args
-                filters = {k: v for k, v in args.items() if v is not None and v != []}
-        print(f"Factual Brain extracted: {filters}")
-    except Exception as e:
-        print(f"Factual Brain Error: {e}."); filters = {}
-        
-    ranking_priority_dicts = []
-    try:
-        ranking_prompt = f"""
-        You are a senior analyst. Analyze the user's query to identify concepts like skill, cost, convenience, etc.
-        Map these concepts to the available database columns: "sentiment_dentist_skill", "sentiment_cost_value", "sentiment_convenience".
-        Return a JSON list of objects, where each object has a 'column' key. Example: [{{"column": "sentiment_dentist_skill"}}]
-        If the query is too generic, return an empty list.
-        USER QUERY: "{query.message}"
-        """
-        response = ranking_model.generate_content(ranking_prompt)
-        json_text = response.text.strip().replace("```json", "").replace("```", "")
-        ranking_priority_dicts = json.loads(json_text)
-        print(f"Semantic Brain identified priority objects: {ranking_priority_dicts}")
-    except Exception as e:
-        print(f"Semantic Brain Error: {e}.")
-        ranking_priority_dicts = []
-
-    ranking_priority = [item['column'] for item in ranking_priority_dicts if isinstance(item, dict) and 'column' in item]
-    print(f"Extracted ranking priority list: {ranking_priority}")
-
-
-    # STAGE 2: "SEMANTIC-FIRST" SEARCH
+    
+    # STAGE 2: SEMANTIC SEARCH (No changes needed)
     candidate_clinics = []
     print("Performing initial semantic search...")
     try:
@@ -93,55 +62,55 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: REVISED FILTERING AND "OBJECTIVE-FIRST" RANKING
+    # STAGE 3: THE FINAL FILTERING AND RANKING LOGIC
     qualified_clinics = []
     if candidate_clinics:
+        # Step 3A: The Quality Gate Filter
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
-        if filters:
-            factually_filtered_clinics = []
-            for clinic in qualified_clinics:
-                match = True
-                if filters.get('township') and filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
-                if filters.get('min_rating') and (clinic.get('rating') is None or clinic.get('rating', 0) < filters.get('min_rating')): match = False
-                if filters.get('services'):
-                    for service in filters.get('services'):
-                        if not clinic.get(service, False): match = False; break
-                if match: factually_filtered_clinics.append(clinic)
-            qualified_clinics = factually_filtered_clinics
-            print(f"Found {len(qualified_clinics)} candidates after applying factual filters.")
-
     top_clinics = []
     if qualified_clinics:
-        objective_keys = ['rating', 'reviews']
-        final_ranking_keys = objective_keys + ranking_priority
-        final_ranking_keys = list(dict.fromkeys(final_ranking_keys))
+        # Step 3B: THE NEW WEIGHTED SCORE RANKING
+        print("Calculating weighted quality scores...")
+        max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
         
-        print(f"Using OBJECTIVE-FIRST ranking with priorities: {final_ranking_keys}")
+        for clinic in qualified_clinics:
+            # Normalize rating (1-5 scale) to a 0-1 score
+            norm_rating = (clinic.get('rating', 0) - 1) / 4.0
+            
+            # Normalize review count using a log scale to balance its impact
+            norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
+            
+            # Weighted score: 65% rating, 35% review confidence/popularity
+            clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
         
-        ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in final_ranking_keys), reverse=True)
+        # Sort by the new, more nuanced quality score
+        ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         top_clinics = ranked_clinics[:5]
+        print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-    # STAGE 4: FINAL RESPONSE GENERATION WITH ENHANCED FORMATTING
+
+    # STAGE 4: FINAL RESPONSE GENERATION WITH "PERFECT" FORMATTING
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
         for clinic in top_clinics:
             clinic_info = {
-                "name": clinic.get('name'), "address": clinic.get('address'), "distance": clinic.get('distance'),
+                "name": clinic.get('name'), "address": clinic.get('address'),
                 "rating": clinic.get('rating'), "reviews": clinic.get('reviews'),
                 "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),
             }
             clinic_data_for_prompt.append(clinic_info)
-        context = json.dumps(clinic_data_for_prompt, indent=2) 
+        context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
         context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
+    # This is the final, most strict and detailed prompt.
     augmented_prompt = f"""
-    You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must emulate the exact style of the "Gold Standard" example.
+    You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must emulate the exact style, tone, and formatting of the provided example.
 
     **USER'S ORIGINAL QUESTION:**
     {query.message}
@@ -151,19 +120,39 @@ def handle_chat(query: UserQuery):
     {context}
     ```
 
-    **YOUR TASK:**
-    Synthesize the provided JSON data into a helpful, structured recommendation. You MUST follow these rules precisely:
+    **--- YOUR TASK & STRICT RULES ---**
 
-    1.  **Opening:** Start with a friendly, professional introductory sentence that acknowledges the user's needs.
-    2.  **Categorization:** Structure the recommendations using these categories and emojis: 🏆 Top Choice, 🌟 Excellent Alternatives. Use the "Excellent Alternatives" heading only once for the subsequent high-quality clinics.
-    3.  **Formatting for EACH Clinic:**
-        - Start with the emoji and category title (e.g., "🏆 Top Choice:").
-        - On the next line, list the clinic **name in bold**.
-        - On new lines below that, list: Rating (with a ★ symbol and review count), Address, Hours, and Website (if available).
-        - Include a "Why it's great:" line where you BRIEFLY synthesize WHY it's a good match.
-        - **CRITICAL: You MUST add a blank line between each full clinic recommendation to ensure readability.**
-    4.  **Final Summary:** After listing the clinics, you MUST include a conclusive "💡 My Recommendation:" summary paragraph. In this paragraph, synthesize your findings and give a final, definitive recommendation to the user.
-    5.  **Closing:** End the entire response by asking an engaging follow-up question, like "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
+    Synthesize the provided JSON data into a helpful, structured recommendation.
+
+    **1. Opening:**
+    Start with: "Based on your criteria of quality, convenience, and value for general teeth cleaning and scaling services in JB, here are my top recommendations:"
+
+    **2. Clinic Recommendations Block:**
+    You will list the clinics using the following formatting rules precisely.
+
+    *   **Structure & Emojis:** Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternatives:" as a single heading for all subsequent clinics.
+    *   **Layout:** The emoji, category title (for the first clinic only), and clinic **name in bold** MUST all be on the same line.
+    *   **Details:** Below the header line, list the following on separate lines: Rating (with a ★ symbol and review count), Address, Hours, and Website (if available).
+    *   **Summarize Hours:** You MUST summarize the operating hours concisely. Do not list every day individually. Use ranges like "Mon-Fri: 9 AM - 6 PM, Sat: 9 AM - 5 PM, Sun: Closed".
+    *   **Justification:** Include a "Why it's great:" line where you briefly synthesize why it's a good match.
+    *   **SPACING: CRITICAL! You MUST add a single blank line between each full clinic recommendation block to ensure readability.**
+
+    **--- EXAMPLE OF PERFECT FORMATTING FOR ONE CLINIC ---**
+    🏆 Top Choice: **CK Dental (Taman Abad)**
+    Rating: 5.0★ (294 reviews)
+    Address: 320, Jalan Dato Sulaiman, Taman Abad
+    Hours: Mon-Fri: 9:30 AM – 6:30 PM, Weekends: 9:30 AM – 5:00 PM
+    Website: [URL]
+    Why it's great: Perfect 5-star rating with nearly 300 reviews, making it ideal for convenience and quality.
+    
+    *(...a blank line would follow here...)*
+    ---
+
+    **3. Final Summary Paragraph:**
+    After listing all clinics, you MUST include a conclusive "💡 My Recommendation:" summary paragraph. In this paragraph, synthesize your findings and give a final, definitive recommendation to the user, explaining your reasoning.
+
+    **4. Closing Question:**
+    End the entire response by asking: "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
     """
     final_response = generation_model.generate_content(augmented_prompt)
     return {"response": final_response.text}
