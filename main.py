@@ -20,9 +20,9 @@ supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
 planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-ranking_model = genai.GenerativeModel('gemini-1.5-flash-latest') 
+ranking_model = genai.Generativeai.GenerativeModel('gemini-1.5-flash-latest') 
 embedding_model = 'models/embedding-001'
-generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+generation_model = genai.Generativeai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel):
@@ -60,22 +60,27 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Factual Brain Error: {e}."); filters = {}
         
-    ranking_priority = []
+    ranking_priority_dicts = []
     try:
-        # This prompt is kept to understand user needs, which will be used as tie-breakers
         ranking_prompt = f"""
         You are a senior analyst. Analyze the user's query to identify concepts like skill, cost, convenience, etc.
         Map these concepts to the available database columns: "sentiment_dentist_skill", "sentiment_cost_value", "sentiment_convenience".
-        Return a JSON list of these columns. If the query is too generic, return an empty list.
+        Return a JSON list of objects, where each object has a 'column' key. Example: [{{"column": "sentiment_dentist_skill"}}]
+        If the query is too generic, return an empty list.
         USER QUERY: "{query.message}"
         """
         response = ranking_model.generate_content(ranking_prompt)
         json_text = response.text.strip().replace("```json", "").replace("```", "")
-        ranking_priority = json.loads(json_text)
-        print(f"Semantic Brain identified as secondary priorities: {ranking_priority}")
+        ranking_priority_dicts = json.loads(json_text)
+        print(f"Semantic Brain identified priority objects: {ranking_priority_dicts}")
     except Exception as e:
         print(f"Semantic Brain Error: {e}.")
-        ranking_priority = []
+        ranking_priority_dicts = []
+
+    # *** THIS IS THE FIX: Convert list of dictionaries to list of strings ***
+    ranking_priority = [item['column'] for item in ranking_priority_dicts if isinstance(item, dict) and 'column' in item]
+    print(f"Extracted ranking priority list: {ranking_priority}")
+
 
     # STAGE 2: "SEMANTIC-FIRST" SEARCH
     candidate_clinics = []
@@ -114,12 +119,10 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # Step 3C: THE NEW "OBJECTIVE-FIRST" RANKING LOGIC
-        # We now always prioritize objective metrics first.
-        # The sentiment priorities from the Semantic Brain are used as secondary tie-breakers.
+        # Step 3C: THE "OBJECTIVE-FIRST" RANKING LOGIC
         objective_keys = ['rating', 'reviews']
         final_ranking_keys = objective_keys + ranking_priority
-        final_ranking_keys = list(dict.fromkeys(final_ranking_keys)) # Remove duplicates
+        final_ranking_keys = list(dict.fromkeys(final_ranking_keys))
         
         print(f"Using OBJECTIVE-FIRST ranking with priorities: {final_ranking_keys}")
         
@@ -141,7 +144,6 @@ def handle_chat(query: UserQuery):
     else:
         context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
-    # This is the final, most sophisticated prompt.
     augmented_prompt = f"""
     You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must emulate the exact style of the "Gold Standard" example.
 
@@ -157,18 +159,19 @@ def handle_chat(query: UserQuery):
     Synthesize the provided JSON data into a helpful, structured recommendation. You MUST follow these rules precisely:
 
     1.  **Opening:** Start with a friendly, professional introductory sentence that acknowledges the user's needs.
-    2.  **Categorization:** Structure the recommendations using these categories and emojis:
-        - 🏆 Top Choice: For the best overall clinic.
-        - 🌟 Excellent Alternatives: For the subsequent 2-3 high-quality clinics. Use this heading only once.
-        - Give clinics interpretive subtitles in parentheses if applicable, like "(Highly Recommended)" or "(Proven Track Record)".
+    2.  **Categorization:** Structure the recommendations using these categories and emojis: 🏆 Top Choice, 🌟 Excellent Alternatives. Use the "Excellent Alternatives" heading only once for the subsequent high-quality clinics.
     3.  **Formatting for EACH Clinic:**
         - Start with the emoji and category title (e.g., "🏆 Top Choice:").
         - On the next line, list the clinic **name in bold**.
-        - On new lines below that, list: Rating (with a ★ symbol and review count), Distance (from CIQ if relevant), Address, Hours, and Website (if available).
+        - On new lines below that, list: Rating (with a ★ symbol and review count), Address, Hours, and Website (if available).
         - Include a "Why it's great:" line where you BRIEFLY synthesize WHY it's a good match.
         - **CRITICAL: You MUST add a blank line between each full clinic recommendation to ensure readability.**
-    4.  **Final Summary:** After listing the clinics, you MUST include a conclusive "💡 My Recommendation:" summary paragraph. In this paragraph, synthesize your findings and give a final, definitive recommendation to the user, explaining your reasoning (e.g., "I'd recommend Clinic A, but Clinic B is a great choice if you need later hours.").
+    4.  **Final Summary:** After listing the clinics, you MUST include a conclusive "💡 My Recommendation:" summary paragraph. In this paragraph, synthesize your findings and give a final, definitive recommendation to the user.
     5.  **Closing:** End the entire response by asking an engaging follow-up question, like "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
     """
     final_response = generation_model.generate_content(augmented_prompt)
-    return {"response": final_response.text}
+    return {"response": final_response.text}```
+
+4.  **Save the file.**
+
+This corrected version properly handles the new data structure from the AI and should resolve the 500 error. Please commit and push this version to Render.
