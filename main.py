@@ -24,9 +24,16 @@ ranking_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum ---
+# --- Pydantic Data Models & Enum (RE-ENABLED) ---
 class UserQuery(BaseModel):
     message: str
+
+class ServiceEnum(str, Enum):
+    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
+
+class SearchFilters(BaseModel):
+    township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
+    services: List[ServiceEnum] = Field(None, description="Extract a list of specific, specialized dental services if explicitly named by the user from the known list.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -39,6 +46,19 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
+    # STAGE 1: FACTUAL BRAIN (RE-ENABLED)
+    filters = {}
+    try:
+        response = planner_model.generate_content(query.message, tools=[SearchFilters])
+        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+            function_call = response.candidates[0].content.parts[0].function_call
+            if function_call:
+                args = function_call.args
+                filters = {k: v for k, v in args.items() if v is not None and v != []}
+        print(f"Factual Brain extracted: {filters}")
+    except Exception as e:
+        print(f"Factual Brain Error: {e}."); filters = {}
+    
     # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
     print("Performing initial semantic search with a wider net...")
@@ -54,13 +74,32 @@ def handle_chat(query: UserQuery):
     # STAGE 3: FILTERING AND RANKING
     qualified_clinics = []
     if candidate_clinics:
+        # Step 3A: The Quality Gate Filter
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
+        # Step 3B: Factual Filtering (RE-ENABLED)
+        if filters:
+            factually_filtered_clinics = []
+            for clinic in qualified_clinics:
+                match = True
+                if filters.get('township') and filters.get('township').lower() not in clinic.get('address', '').lower():
+                    match = False
+                if filters.get('services'):
+                    for service in filters.get('services'):
+                        if not clinic.get(service, False):
+                            match = False
+                            break
+                if match:
+                    factually_filtered_clinics.append(clinic)
+            qualified_clinics = factually_filtered_clinics
+            print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
+
     top_clinics = []
     if qualified_clinics:
+        # Step 3C: THE WEIGHTED SCORE RANKING
         print("Calculating weighted quality scores...")
         max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
         
@@ -74,7 +113,7 @@ def handle_chat(query: UserQuery):
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL RESPONSE GENERATION WITH THE "PERFECT EXAMPLE" PROMPT
+    # STAGE 4: FINAL RESPONSE GENERATION (using the "Perfect Example" prompt)
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -87,9 +126,8 @@ def handle_chat(query: UserQuery):
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
+        context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
-    # This is the final, definitive prompt. It relies on a high-quality example.
     augmented_prompt = f"""
     You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation.
     Your response must be friendly, professional, and perfectly formatted like the example provided.
@@ -121,17 +159,6 @@ def handle_chat(query: UserQuery):
     *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
     *   **Hours:** Daily: 9:00 AM – 6:00 PM
     *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
-
-    **Adda Heights Dental Studio**
-    *   **Rating:** 4.9★ (1065 reviews)
-    *   **Address:** Ground Floor, 108&110, Jalan Adda 7, Adda Heights, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** A strong combination of high ratings and numerous positive reviews.
-
-    💡 **My Recommendation:**
-    Given the exceptionally high volume of positive reviews, JDT Dental is the recommended choice. However, the other two clinics are excellent alternatives depending on your location preference.
-
-    Would you like help with booking an appointment?
     ---
     
     **MANDATORY RULES CHECKLIST:**
@@ -139,7 +166,7 @@ def handle_chat(query: UserQuery):
     2.  Did you use bullet points (`* `) for the details under each clinic?
     3.  **Did you add a blank line (two newlines) between each full clinic recommendation block?**
     4.  Did you summarize the operating hours concisely?
-    5.  Did you keep the "Why it's great" and "My Recommendation" sections brief and to the point?
+    5.  Did you keep the "Why it's great" and "My Recommendation" sections brief?
     """
     
     final_response = generation_model.generate_content(augmented_prompt)
