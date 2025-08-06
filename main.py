@@ -1,6 +1,6 @@
 import os
 import google.generativeai as genai
-from dotenv import load_dotenv
+from dotenv import loaddotenv
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
@@ -24,16 +24,30 @@ ranking_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum (RE-ENABLED) ---
+# --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel):
     message: str
 
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
+# *** THIS IS THE ENHANCED VERSION OF SearchFilters ***
 class SearchFilters(BaseModel):
     township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
-    services: List[ServiceEnum] = Field(None, description="Extract a list of specific, specialized dental services if explicitly named by the user from the known list.")
+    services: List[ServiceEnum] = Field(
+        None, 
+        description=(
+            "Extract a list of specific dental services the user is asking for. "
+            "You must map the user's words to the correct technical service name from the Enum. "
+            "Here are some common mappings to help you: "
+            "'implants' or 'dental implant' -> 'dental_implant'. "
+            "'braces' or 'orthodontics' -> 'braces'. "
+            "'whitening' or 'teeth bleaching' -> 'teeth_whitening'. "
+            "'root canal treatment' -> 'root_canal'. "
+            "'crown' or 'cap' -> 'dental_crown'. "
+            "'wisdom tooth extraction' -> 'wisdom_tooth'."
+        )
+    )
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -46,7 +60,7 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: FACTUAL BRAIN (RE-ENABLED)
+    # STAGE 1: FACTUAL BRAIN
     filters = {}
     try:
         response = planner_model.generate_content(query.message, tools=[SearchFilters])
@@ -80,7 +94,7 @@ def handle_chat(query: UserQuery):
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
-        # Step 3B: Factual Filtering (RE-ENABLED)
+        # Step 3B: Factual Filtering
         if filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
@@ -113,7 +127,7 @@ def handle_chat(query: UserQuery):
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL RESPONSE GENERATION (using the "Perfect Example" prompt)
+    # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
