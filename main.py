@@ -1,6 +1,6 @@
 import os
 import google.generativeai as genai
-from dotenv import loaddotenv
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
