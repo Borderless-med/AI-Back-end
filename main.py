@@ -28,14 +28,6 @@ generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 class UserQuery(BaseModel):
     message: str
 
-class ServiceEnum(str, Enum):
-    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
-
-class SearchFilters(BaseModel):
-    township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
-    min_rating: float = Field(None, description="Extract a minimum Google rating if specified by the user.")
-    services: List[ServiceEnum] = Field(None, description="Extract a list of specific, specialized dental services if explicitly named by the user from the known list.")
-
 # --- FastAPI App ---
 app = FastAPI()
 
@@ -47,9 +39,6 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: FACTUAL BRAIN
-    filters = {}
-    
     # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
     print("Performing initial semantic search with a wider net...")
@@ -85,65 +74,47 @@ def handle_chat(query: UserQuery):
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION WITH MARKDOWN
+    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION WITH HTML
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
         for clinic in top_clinics:
             clinic_info = {
-                "name": clinic.get('name'), "address": clinic.get('address'),
+                "name": clinic.get('name'),
                 "rating": clinic.get('rating'), "reviews": clinic.get('reviews'),
-                "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),
             }
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
+        context = "I'm sorry, I could not find any clinics that matched your search criteria."
 
-    # This prompt now commands the AI to use Markdown for formatting.
+    # This prompt now commands the AI to use simple HTML for formatting and enforces hard length limits.
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation.
-    **CRITICAL INSTRUCTION:** You MUST format your entire response using Github Flavored Markdown. Do not use any other format.
+    You are an expert dental clinic assistant who provides very brief, scannable recommendations.
+    **CRITICAL RULE:** Your entire response MUST be formatted using simple HTML tags like `<b>` for bold and `<br>` for line breaks.
 
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
     {context}
     ```
 
-    **--- YOUR TASK & STRICT MARKDOWN RULES ---**
+    **--- YOUR TASK & STRICT RULES ---**
 
-    Synthesize the provided JSON data into a short and highly readable recommendation. Follow the formatting in the EXAMPLE precisely.
+    Synthesize the provided JSON data into a very short recommendation.
 
-    **--- EXAMPLE OF PERFECT MARKDOWN FORMATTING ---**
-
-    Based on your criteria, here are my top recommendations:
-
-    🏆 **Top Choice: JDT Dental**
-    *   **Rating:** 4.9★ (1542 reviews)
-    *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
-
-    🌟 **Excellent Alternatives:**
-
-    **Austin Dental Group (Mount Austin)**
-    *   **Rating:** 4.9★ (1085 reviews)
-    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
+    **--- EXAMPLE OF PERFECT HTML FORMATTING ---**
+    Here are the top 3 clinics for you:<br><br><b>🏆 JDT Dental</b><br>Rating: 4.9★ (1542 reviews)<br>Why it's great: Top choice for proven quality and experience.<br><br><b>🌟 Austin Dental Group</b><br>Rating: 4.9★ (1085 reviews)<br>Why it's great: Excellent alternative with a strong track record.<br><br><b>🌟 Adda Heights Dental Studio</b><br>Rating: 4.9★ (1065 reviews)<br>Why it's great: Another highly-rated and trusted option.
     ---
     
     **MANDATORY RULES CHECKLIST:**
-    1.  Did you use Markdown for all formatting? (e.g., `**Bold Text**`, `*   List Item`)
-    2.  Did you use `🏆 **Top Choice:**` for the first clinic?
-    3.  Did you use `🌟 **Excellent Alternatives:**` as the heading for the rest?
-    4.  Did you use bullet points (`* `) for the details under each clinic?
-    5.  **Did you add a blank line between each full clinic recommendation block to ensure spacing?**
-    6.  Did you include a final, brief "💡 **My Recommendation:**" summary paragraph (1-2 sentences)?
-    7.  Did you end with a friendly follow-up question?
+    1.  Did you use simple HTML tags (`<b>`, `<br>`) for ALL formatting?
+    2.  Is the "Why it's great:" justification VERY short (under 10 words)?
+    3.  **Did you use `<br><br>` to create a blank line between each clinic?**
+    4.  Did you OMIT the "My Recommendation" summary paragraph?
+    5.  Did you OMIT the follow-up question?
+    6.  Is the entire response extremely short and to the point?
     """
     
-    # We no longer need the .replace() trick. We return the raw text.
     final_response = generation_model.generate_content(augmented_prompt)
 
     return {"response": final_response.text}
