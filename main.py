@@ -65,7 +65,6 @@ def handle_chat(query: UserQuery):
     # STAGE 3: FILTERING AND RANKING
     qualified_clinics = []
     if candidate_clinics:
-        # Step 3A: The Quality Gate Filter
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 qualified_clinics.append(clinic)
@@ -73,7 +72,6 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # Step 3B: THE WEIGHTED SCORE RANKING
         print("Calculating weighted quality scores...")
         max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
         
@@ -83,7 +81,6 @@ def handle_chat(query: UserQuery):
             clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
         
         ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
-        # *** KEY CHANGE: Only select the top 3 clinics ***
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
@@ -103,9 +100,9 @@ def handle_chat(query: UserQuery):
     else:
         context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
-    # This prompt is now engineered for brevity and clarity.
+    # This prompt now uses the ---CLINICBREAK--- separator
     augmented_prompt = f"""
-    You are an expert, friendly, and concise dental clinic assistant. Your goal is to provide a brief, data-driven recommendation based ONLY on the JSON context provided. You must exactly emulate the formatting shown in the EXAMPLE below.
+    You are an expert, friendly, and concise dental clinic assistant. Your goal is to provide a brief, data-driven recommendation based ONLY on the JSON context provided.
 
     **USER'S ORIGINAL QUESTION:**
     {query.message}
@@ -115,39 +112,22 @@ def handle_chat(query: UserQuery):
     {context}
     ```
 
-    **--- YOUR TASK & STRICT RULES FOR BREVITY ---**
+    **--- YOUR TASK & STRICT RULES ---**
+    Synthesize the provided JSON data into a short and highly readable recommendation. You MUST follow all formatting rules.
 
-    Synthesize the provided JSON data into a short and highly readable recommendation.
-
-    **--- EXAMPLE OF PERFECT FORMATTING ---**
-    Based on your criteria, here are my top recommendations:
-
-    🏆 Top Choice: **CK Dental (Taman Abad)**
-    Rating: 5.0★ (294 reviews)
-    Address: 320, Jalan Dato Sulaiman, Taman Abad
-    Hours: Mon-Fri: 9:30 AM – 6:30 PM, Weekends: 9:30 AM – 5:00 PM
-    Why it's great: Perfect 5-star rating with nearly 300 reviews, making it ideal for convenience and quality.
-
-    🌟 Excellent Alternative:
-    
-    **Asiaa Dental Clinic**
-    Rating: 5.0★ (292 reviews)
-    Address: 113A, Jalan Perisai, Taman Sri Tebrau
-    Hours: Daily: 9:00 AM – 9:00 PM
-    Why it's great: Extended operating hours until 9 PM every day offer exceptional convenience!
-    
-    *(...a blank line would follow here before the next clinic...)*
-    ---
-    
-    **MANDATORY FORMATTING & CONTENT RULES:**
-    - Present the top 2-3 clinics only.
-    - Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternative:" (or "🌟 Excellent Alternatives:") as a single heading for the rest.
+    - Use "🏆 Top Choice:" for the first clinic.
+    - Use "🌟 Excellent Alternative:" (or "🌟 Excellent Alternatives:") as a single heading for the rest.
     - You MUST summarize operating hours concisely.
     - The "Why it's great:" justification MUST be a single, brief sentence.
-    - **CRITICAL: You MUST place a single blank line between each clinic's full recommendation block.**
+    - **CRITICAL: You MUST place the exact string `---CLINICBREAK---` on its own line between each clinic's full recommendation block.**
     - After the list, include a very brief "💡 My Recommendation:" summary (1-2 sentences only).
-    - **DO NOT** include a "Pro Tips" section.
     - End with a friendly, one-line follow-up question.
     """
-    final_response = generation_model.generate_content(augmented_prompt)
-    return {"response": final_response.text}
+    
+    # Generate the raw response from the AI
+    raw_response = generation_model.generate_content(augmented_prompt)
+    
+    # *** THIS IS THE FIX: Replace the separator with a real blank line ***
+    final_text = raw_response.text.replace('---CLINICBREAK---', '\n')
+
+    return {"response": final_text}
