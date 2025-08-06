@@ -74,24 +74,25 @@ def handle_chat(query: UserQuery):
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION WITH HTML
+    # STAGE 4: FINAL RESPONSE GENERATION WITH THE "PERFECT EXAMPLE" PROMPT
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
         for clinic in top_clinics:
             clinic_info = {
-                "name": clinic.get('name'),
+                "name": clinic.get('name'), "address": clinic.get('address'),
                 "rating": clinic.get('rating'), "reviews": clinic.get('reviews'),
+                "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),
             }
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        context = "I'm sorry, I could not find any clinics that matched your search criteria."
+        context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
-    # This prompt now commands the AI to use simple HTML for formatting and enforces hard length limits.
+    # This is the final, definitive prompt. It relies on a high-quality example.
     augmented_prompt = f"""
-    You are an expert dental clinic assistant who provides very brief, scannable recommendations.
-    **CRITICAL RULE:** Your entire response MUST be formatted using simple HTML tags like `<b>` for bold and `<br>` for line breaks.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation.
+    Your response must be friendly, professional, and perfectly formatted like the example provided.
 
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
@@ -100,19 +101,45 @@ def handle_chat(query: UserQuery):
 
     **--- YOUR TASK & STRICT RULES ---**
 
-    Synthesize the provided JSON data into a very short recommendation.
+    Synthesize the provided JSON data into a short and highly readable recommendation.
+    You MUST exactly emulate the formatting, spacing, tone, and conciseness of the example below.
 
-    **--- EXAMPLE OF PERFECT HTML FORMATTING ---**
-    Here are the top 3 clinics for you:<br><br><b>🏆 JDT Dental</b><br>Rating: 4.9★ (1542 reviews)<br>Why it's great: Top choice for proven quality and experience.<br><br><b>🌟 Austin Dental Group</b><br>Rating: 4.9★ (1085 reviews)<br>Why it's great: Excellent alternative with a strong track record.<br><br><b>🌟 Adda Heights Dental Studio</b><br>Rating: 4.9★ (1065 reviews)<br>Why it's great: Another highly-rated and trusted option.
+    **--- EXAMPLE OF PERFECT RESPONSE ---**
+
+    Based on your criteria, here are my top recommendations:
+
+    🏆 **Top Choice: JDT Dental**
+    *   **Rating:** 4.9★ (1542 reviews)
+    *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
+
+    🌟 **Excellent Alternatives:**
+
+    **Austin Dental Group (Mount Austin)**
+    *   **Rating:** 4.9★ (1085 reviews)
+    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
+
+    **Adda Heights Dental Studio**
+    *   **Rating:** 4.9★ (1065 reviews)
+    *   **Address:** Ground Floor, 108&110, Jalan Adda 7, Adda Heights, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** A strong combination of high ratings and numerous positive reviews.
+
+    💡 **My Recommendation:**
+    Given the exceptionally high volume of positive reviews, JDT Dental is the recommended choice. However, the other two clinics are excellent alternatives depending on your location preference.
+
+    Would you like help with booking an appointment?
     ---
     
     **MANDATORY RULES CHECKLIST:**
-    1.  Did you use simple HTML tags (`<b>`, `<br>`) for ALL formatting?
-    2.  Is the "Why it's great:" justification VERY short (under 10 words)?
-    3.  **Did you use `<br><br>` to create a blank line between each clinic?**
-    4.  Did you OMIT the "My Recommendation" summary paragraph?
-    5.  Did you OMIT the follow-up question?
-    6.  Is the entire response extremely short and to the point?
+    1.  Did you match the tone and structure of the example?
+    2.  Did you use bullet points (`* `) for the details under each clinic?
+    3.  **Did you add a blank line (two newlines) between each full clinic recommendation block?**
+    4.  Did you summarize the operating hours concisely?
+    5.  Did you keep the "Why it's great" and "My Recommendation" sections brief and to the point?
     """
     
     final_response = generation_model.generate_content(augmented_prompt)
