@@ -47,23 +47,22 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: FACTUAL BRAIN (No changes needed)
+    # STAGE 1: FACTUAL BRAIN
     filters = {}
     
-    # STAGE 2: "WIDER NET" SEMANTIC SEARCH
+    # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
     print("Performing initial semantic search with a wider net...")
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
         query_embedding = query_embedding_response['embedding']
-        # *** THE KEY CHANGE IS HERE: match_count is now 75 ***
         db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 75}).execute()
         candidate_clinics = db_response.data if db_response.data else []
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: FILTERING AND WEIGHTED SCORE RANKING
+    # STAGE 3: FILTERING AND RANKING
     qualified_clinics = []
     if candidate_clinics:
         # Step 3A: The Quality Gate Filter
@@ -84,11 +83,12 @@ def handle_chat(query: UserQuery):
             clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
         
         ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
-        top_clinics = ranked_clinics[:5]
+        # *** KEY CHANGE: Only select the top 3 clinics ***
+        top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL RESPONSE GENERATION WITH "PERFECT" FORMATTING
+    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -103,9 +103,9 @@ def handle_chat(query: UserQuery):
     else:
         context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
-    # This is the final, most strict and detailed prompt.
+    # This prompt is now engineered for brevity and clarity.
     augmented_prompt = f"""
-    You are an expert, friendly, and highly readable dental clinic assistant for Johor Bahru. Your goal is to provide a rich, data-driven recommendation based ONLY on the JSON context provided. You must exactly emulate the formatting shown in the EXAMPLE below.
+    You are an expert, friendly, and concise dental clinic assistant. Your goal is to provide a brief, data-driven recommendation based ONLY on the JSON context provided. You must exactly emulate the formatting shown in the EXAMPLE below.
 
     **USER'S ORIGINAL QUESTION:**
     {query.message}
@@ -115,15 +115,9 @@ def handle_chat(query: UserQuery):
     {context}
     ```
 
-    **--- YOUR TASK & STRICT RULES ---**
+    **--- YOUR TASK & STRICT RULES FOR BREVITY ---**
 
-    Synthesize the provided JSON data into a helpful, structured recommendation.
-
-    **1. Opening:**
-    Start with: "Based on your criteria of quality, convenience, and value for general teeth cleaning and scaling services in JB, here are my top recommendations:"
-
-    **2. Clinic Recommendations Block:**
-    You will list the clinics using the following formatting rules precisely.
+    Synthesize the provided JSON data into a short and highly readable recommendation.
 
     **--- EXAMPLE OF PERFECT FORMATTING ---**
     Based on your criteria, here are my top recommendations:
@@ -132,28 +126,28 @@ def handle_chat(query: UserQuery):
     Rating: 5.0★ (294 reviews)
     Address: 320, Jalan Dato Sulaiman, Taman Abad
     Hours: Mon-Fri: 9:30 AM – 6:30 PM, Weekends: 9:30 AM – 5:00 PM
-    Website: [URL]
     Why it's great: Perfect 5-star rating with nearly 300 reviews, making it ideal for convenience and quality.
 
-    🌟 Excellent Alternatives:
+    🌟 Excellent Alternative:
     
     **Asiaa Dental Clinic**
     Rating: 5.0★ (292 reviews)
     Address: 113A, Jalan Perisai, Taman Sri Tebrau
     Hours: Daily: 9:00 AM – 9:00 PM
-    Website: [URL]
-    Why it's great: Extended operating hours until 9 PM every day - perfect for convenience!
+    Why it's great: Extended operating hours until 9 PM every day offer exceptional convenience!
     
     *(...a blank line would follow here before the next clinic...)*
     ---
     
-    **MANDATORY FORMATTING RULES:**
-    - Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternatives:" as a single heading for all subsequent clinics.
-    - The "Top Choice" header (emoji, title, name) is all on one line. For "Excellent Alternatives," the heading is on one line and the bolded clinic name is on the line below it.
-    - You MUST summarize operating hours concisely (e.g., "Mon-Fri: 9 AM - 6 PM"). Do not list every day individually.
+    **MANDATORY FORMATTING & CONTENT RULES:**
+    - Present the top 2-3 clinics only.
+    - Use "🏆 Top Choice:" for the first clinic and "🌟 Excellent Alternative:" (or "🌟 Excellent Alternatives:") as a single heading for the rest.
+    - You MUST summarize operating hours concisely.
+    - The "Why it's great:" justification MUST be a single, brief sentence.
     - **CRITICAL: You MUST place a single blank line between each clinic's full recommendation block.**
-    - After listing all clinics, include a summary paragraph titled "💡 My Recommendation:".
-    - End the entire response with the question: "Would you like me to provide more specific information about pricing or help you with booking details for any of these clinics?"
+    - After the list, include a very brief "💡 My Recommendation:" summary (1-2 sentences only).
+    - **DO NOT** include a "Pro Tips" section.
+    - End with a friendly, one-line follow-up question.
     """
     final_response = generation_model.generate_content(augmented_prompt)
     return {"response": final_response.text}
