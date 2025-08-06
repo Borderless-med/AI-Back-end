@@ -85,7 +85,7 @@ def handle_chat(query: UserQuery):
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
 
-    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION
+    # STAGE 4: FINAL, CONCISE RESPONSE GENERATION WITH MARKDOWN
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -100,34 +100,50 @@ def handle_chat(query: UserQuery):
     else:
         context = "I'm sorry, I could not find any clinics that matched your search criteria after applying our quality standards."
 
-    # This prompt now uses the ---CLINICBREAK--- separator
+    # This prompt now commands the AI to use Markdown for formatting.
     augmented_prompt = f"""
-    You are an expert, friendly, and concise dental clinic assistant. Your goal is to provide a brief, data-driven recommendation based ONLY on the JSON context provided.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation.
+    **CRITICAL INSTRUCTION:** You MUST format your entire response using Github Flavored Markdown. Do not use any other format.
 
-    **USER'S ORIGINAL QUESTION:**
-    {query.message}
-
-    **CONTEXT (TOP CLINICS FOUND IN JSON FORMAT):**
+    **CONTEXT (TOP CLINICS FOUND):**
     ```json
     {context}
     ```
 
-    **--- YOUR TASK & STRICT RULES ---**
-    Synthesize the provided JSON data into a short and highly readable recommendation. You MUST follow all formatting rules.
+    **--- YOUR TASK & STRICT MARKDOWN RULES ---**
 
-    - Use "🏆 Top Choice:" for the first clinic.
-    - Use "🌟 Excellent Alternative:" (or "🌟 Excellent Alternatives:") as a single heading for the rest.
-    - You MUST summarize operating hours concisely.
-    - The "Why it's great:" justification MUST be a single, brief sentence.
-    - **CRITICAL: You MUST place the exact string `---CLINICBREAK---` on its own line between each clinic's full recommendation block.**
-    - After the list, include a very brief "💡 My Recommendation:" summary (1-2 sentences only).
-    - End with a friendly, one-line follow-up question.
+    Synthesize the provided JSON data into a short and highly readable recommendation. Follow the formatting in the EXAMPLE precisely.
+
+    **--- EXAMPLE OF PERFECT MARKDOWN FORMATTING ---**
+
+    Based on your criteria, here are my top recommendations:
+
+    🏆 **Top Choice: JDT Dental**
+    *   **Rating:** 4.9★ (1542 reviews)
+    *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
+
+    🌟 **Excellent Alternatives:**
+
+    **Austin Dental Group (Mount Austin)**
+    *   **Rating:** 4.9★ (1085 reviews)
+    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
+    ---
+    
+    **MANDATORY RULES CHECKLIST:**
+    1.  Did you use Markdown for all formatting? (e.g., `**Bold Text**`, `*   List Item`)
+    2.  Did you use `🏆 **Top Choice:**` for the first clinic?
+    3.  Did you use `🌟 **Excellent Alternatives:**` as the heading for the rest?
+    4.  Did you use bullet points (`* `) for the details under each clinic?
+    5.  **Did you add a blank line between each full clinic recommendation block to ensure spacing?**
+    6.  Did you include a final, brief "💡 **My Recommendation:**" summary paragraph (1-2 sentences)?
+    7.  Did you end with a friendly follow-up question?
     """
     
-    # Generate the raw response from the AI
-    raw_response = generation_model.generate_content(augmented_prompt)
-    
-    # *** THIS IS THE FIX: Replace the separator with a real blank line ***
-    final_text = raw_response.text.replace('---CLINICBREAK---', '\n')
+    # We no longer need the .replace() trick. We return the raw text.
+    final_response = generation_model.generate_content(augmented_prompt)
 
-    return {"response": final_text}
+    return {"response": final_response.text}
