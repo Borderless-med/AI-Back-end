@@ -20,33 +20,34 @@ supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
 planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-ranking_model = genai.GenerativeModel('gemini-1.5-flash-latest') 
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum ---
+# --- Pydantic Data Models & Enum for the new Intent Router ---
 class UserQuery(BaseModel):
     message: str
 
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
-# *** THIS IS THE ENHANCED VERSION OF SearchFilters ***
-class SearchFilters(BaseModel):
-    township: str = Field(None, description="Extract the city, area, or township. Example: 'Permas Jaya'.")
-    services: List[ServiceEnum] = Field(
-        None, 
-        description=(
-            "Extract a list of specific dental services the user is asking for. "
-            "You must map the user's words to the correct technical service name from the Enum. "
-            "Here are some common mappings to help you: "
-            "'implants' or 'dental implant' -> 'dental_implant'. "
-            "'braces' or 'orthodontics' -> 'braces'. "
-            "'whitening' or 'teeth bleaching' -> 'teeth_whitening'. "
-            "'root canal treatment' -> 'root_canal'. "
-            "'crown' or 'cap' -> 'dental_crown'. "
-            "'wisdom tooth extraction' -> 'wisdom_tooth'."
-        )
+class Intent(str, Enum):
+    FIND_CLINIC_GENERAL = "find_clinic_general"
+    FIND_CLINIC_BY_SERVICE = "find_clinic_by_service"
+    FIND_CLINIC_BY_LOCATION = "find_clinic_by_location"
+    FIND_CLINIC_BY_SERVICE_AND_LOCATION = "find_clinic_by_service_and_location"
+
+class UserIntent(BaseModel):
+    intent: Intent = Field(
+        ..., # The '...' makes this field required
+        description="Classify the user's primary goal based on their query. If they mention a service or location, classify accordingly. Otherwise, classify as general."
+    )
+    service: ServiceEnum = Field(
+        None,
+        description="If the user mentions a specific dental service, extract it. You must map their words to the correct Enum value (e.g., 'implants' -> 'dental_implant', 'cap' -> 'dental_crown')."
+    )
+    township: str = Field(
+        None,
+        description="If the user mentions a specific city, area, or township, extract it."
     )
 
 # --- FastAPI App ---
@@ -60,19 +61,33 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: FACTUAL BRAIN
+    # STAGE 1: INTENT ROUTING AND DEDICATED EXTRACTION
     filters = {}
+    intent = Intent.FIND_CLINIC_GENERAL # Default intent
     try:
-        response = planner_model.generate_content(query.message, tools=[SearchFilters])
-        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            function_call = response.candidates[0].content.parts[0].function_call
-            if function_call:
-                args = function_call.args
-                filters = {k: v for k, v in args.items() if v is not None and v != []}
-        print(f"Factual Brain extracted: {filters}")
+        # The Router's only job is to classify the query and extract facts using the UserIntent tool.
+        router_response = planner_model.generate_content(
+            f"Analyze the user's query and extract their intent and any specific entities mentioned. Query: '{query.message}'",
+            tools=[UserIntent]
+        )
+        function_call_args = router_response.candidates[0].content.parts[0].function_call.args
+        
+        if function_call_args.get('intent'):
+            intent = function_call_args.get('intent')
+        
+        # Build the filters object based on the extracted entities
+        if function_call_args.get('service'):
+            filters['services'] = [function_call_args.get('service')]
+        if function_call_args.get('township'):
+            filters['township'] = function_call_args.get('township')
+            
+        print(f"Detected Intent: {intent}")
+        print(f"Router extracted filters: {filters}")
+
     except Exception as e:
-        print(f"Factual Brain Error: {e}."); filters = {}
-    
+        print(f"Intent Router Error: {e}. Defaulting to general search.")
+        intent = Intent.FIND_CLINIC_GENERAL
+
     # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
     print("Performing initial semantic search with a wider net...")
@@ -94,7 +109,7 @@ def handle_chat(query: UserQuery):
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
-        # Step 3B: Factual Filtering
+        # Step 3B: Factual Filtering (now powered by the reliable router)
         if filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
@@ -143,21 +158,13 @@ def handle_chat(query: UserQuery):
         context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation.
-    Your response must be friendly, professional, and perfectly formatted like the example provided.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted like the example.
 
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
     {context}
     ```
-
-    **--- YOUR TASK & STRICT RULES ---**
-
-    Synthesize the provided JSON data into a short and highly readable recommendation.
-    You MUST exactly emulate the formatting, spacing, tone, and conciseness of the example below.
-
     **--- EXAMPLE OF PERFECT RESPONSE ---**
-
     Based on your criteria, here are my top recommendations:
 
     🏆 **Top Choice: JDT Dental**
@@ -175,12 +182,12 @@ def handle_chat(query: UserQuery):
     *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
     ---
     
-    **MANDATORY RULES CHECKLIST:**
-    1.  Did you match the tone and structure of the example?
-    2.  Did you use bullet points (`* `) for the details under each clinic?
-    3.  **Did you add a blank line (two newlines) between each full clinic recommendation block?**
-    4.  Did you summarize the operating hours concisely?
-    5.  Did you keep the "Why it's great" and "My Recommendation" sections brief?
+    **MANDATORY RULES:**
+    1.  Emulate the tone and structure of the example.
+    2.  Use bullet points (`* `) for details.
+    3.  Add a blank line between each clinic block.
+    4.  Summarize operating hours concisely.
+    5.  Keep the "Why it's great" and "My Recommendation" sections brief.
     """
     
     final_response = generation_model.generate_content(augmented_prompt)
