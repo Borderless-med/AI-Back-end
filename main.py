@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
-from typing import List
+from typing import List, Optional
 import json
 import numpy as np
 from numpy.linalg import norm
@@ -23,7 +23,7 @@ planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum for the new Intent Router ---
+# --- Pydantic Data Models & Enum for the Intent Router ---
 class UserQuery(BaseModel):
     message: str
 
@@ -37,18 +37,9 @@ class Intent(str, Enum):
     FIND_CLINIC_BY_SERVICE_AND_LOCATION = "find_clinic_by_service_and_location"
 
 class UserIntent(BaseModel):
-    intent: Intent = Field(
-        ..., # The '...' makes this field required
-        description="Classify the user's primary goal based on their query. If they mention a service or location, classify accordingly. Otherwise, classify as general."
-    )
-    service: ServiceEnum = Field(
-        None,
-        description="If the user mentions a specific dental service, extract it. You must map their words to the correct Enum value (e.g., 'implants' -> 'dental_implant', 'cap' -> 'dental_crown')."
-    )
-    township: str = Field(
-        None,
-        description="If the user mentions a specific city, area, or township, extract it."
-    )
+    intent: Intent = Field(..., description="Classify the user's primary goal. If they don't mention a service or location, the intent is find_clinic_general.")
+    service: Optional[ServiceEnum] = Field(None, description="If the user mentions a specific dental service, extract it. Map common terms to the enum value (e.g., 'implants' -> 'dental_implant', 'cap' -> 'dental_crown').")
+    township: Optional[str] = Field(None, description="If the user mentions a specific township or area, extract the name of the location.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -63,30 +54,26 @@ def handle_chat(query: UserQuery):
 
     # STAGE 1: INTENT ROUTING AND DEDICATED EXTRACTION
     filters = {}
-    intent = Intent.FIND_CLINIC_GENERAL # Default intent
+    intent = Intent.FIND_CLINIC_GENERAL
     try:
-        # The Router's only job is to classify the query and extract facts using the UserIntent tool.
         router_response = planner_model.generate_content(
-            f"Analyze the user's query and extract their intent and any specific entities mentioned. Query: '{query.message}'",
+            f"Analyze the user's query to classify their intent and extract entities.\nQuery: '{query.message}'",
             tools=[UserIntent]
         )
-        function_call_args = router_response.candidates[0].content.parts[0].function_call.args
-        
-        if function_call_args.get('intent'):
-            intent = function_call_args.get('intent')
-        
-        # Build the filters object based on the extracted entities
-        if function_call_args.get('service'):
-            filters['services'] = [function_call_args.get('service')]
-        if function_call_args.get('township'):
-            filters['township'] = function_call_args.get('township')
-            
+        function_call = router_response.candidates[0].content.parts[0].function_call
+        if function_call:
+            args = function_call.args
+            intent = args.get('intent', Intent.FIND_CLINIC_GENERAL)
+            if args.get('service'):
+                filters['services'] = [args.get('service')]
+            if args.get('township'):
+                filters['township'] = args.get('township')
         print(f"Detected Intent: {intent}")
         print(f"Router extracted filters: {filters}")
-
     except Exception as e:
         print(f"Intent Router Error: {e}. Defaulting to general search.")
         intent = Intent.FIND_CLINIC_GENERAL
+        filters = {}
 
     # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
@@ -103,13 +90,11 @@ def handle_chat(query: UserQuery):
     # STAGE 3: FILTERING AND RANKING
     qualified_clinics = []
     if candidate_clinics:
-        # Step 3A: The Quality Gate Filter
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate (rating >= 4.5, reviews >= 30).")
 
-        # Step 3B: Factual Filtering (now powered by the reliable router)
         if filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
@@ -128,7 +113,6 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # Step 3C: THE WEIGHTED SCORE RANKING
         print("Calculating weighted quality scores...")
         max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
         
@@ -140,7 +124,6 @@ def handle_chat(query: UserQuery):
         ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic by weighted score: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
-
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
