@@ -24,6 +24,27 @@ ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
+# --- Configuration & Source of Truth ---
+
+# This is the complete and exhaustive list of townships from your database.
+KNOWN_TOWNSHIPS = sorted(list(set([
+    "adda heights", "bandar baru permas jaya", "bandar baru seri alam", "bandar baru uda",
+    "bandar dato onn", "bandar indahpura", "bandar johor bahru", "bandar putra kulai",
+    "bandar seri alam", "century garden", "gelang patah", "horizon hills", "indahpura",
+    "kebun teh", "kota masai", "kota southkey", "kulai", "kulai besar", "larkin",
+    "mutiara rini", "pasir gudang", "pekan nanas", "skudai", "taman abad",
+    "taman bukit indah", "taman bukit tiram", "taman century", "taman damansara aliff",
+    "taman daya", "taman desa cemerlang", "taman eko botani", "taman gaya",
+    "taman impian emas", "taman johor jaya", "taman kebun teh", "taman kota masai",
+    "taman kulai", "taman kulai besar", "taman molek", "taman mount austin",
+    "taman nusa bestari", "taman nusa bestari jaya", "taman nusantara", "taman pelangi",
+    "taman perling", "taman rinting", "taman scientex", "taman sentosa",
+    "taman setia indah", "taman setia tropika", "taman sri tebrau", "taman sutera utama",
+    "taman tiram baru", "taman ungku tun aminah", "taman universiti", "tanjung puteri",
+    "ulu tiram"
+])))
+
+
 # --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel):
     message: str
@@ -31,14 +52,10 @@ class UserQuery(BaseModel):
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
-class LocationType(str, Enum):
-    TOWNSHIP = "township"
-    REGION = "region"
-
+# Simplified model for the Factual Brain
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="If the user mentions a specific dental service, extract it. Map common terms to the enum value (e.g., 'implants' -> 'dental_implant').")
-    location_name: Optional[str] = Field(None, description="If the user mentions a location, extract its name (e.g., 'Permas Jaya', 'JB', 'Johor Bahru').")
-    location_type: Optional[LocationType] = Field(None, description="Classify the extracted location. Specific, local areas are 'township'. Broad areas like cities (e.g., 'JB', 'Johor Bahru') or countries are 'region'.")
+    location: Optional[str] = Field(None, description="If the user mentions any location, extract its name (e.g., 'Permas Jaya', 'JB', 'Johor Bahru').")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -56,15 +73,13 @@ def handle_chat(query: UserQuery):
     ranking_priorities = []
     
     try:
-        # Factual Brain now also classifies location type
         factual_response = factual_brain_model.generate_content(
-            f"Extract entities from the user's query. Classify the location type carefully. Query: '{query.message}'",
+            f"Extract entities from the user's query. Query: '{query.message}'",
             tools=[UserIntent]
         )
         function_call = factual_response.candidates[0].content.parts[0].function_call
         if function_call:
             args = function_call.args
-            # We now store all extracted args for later use
             filters = {k: v for k, v in args.items() if v is not None}
         print(f"Factual Brain extracted: {filters}")
     except Exception as e:
@@ -74,8 +89,8 @@ def handle_chat(query: UserQuery):
     try:
         ranking_prompt = f"""
         Analyze the user's query for sentimental priorities for ranking clinics ('sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience', 'sentiment_pain_management').
+        - If the user explicitly mentions a priority (e.g., 'good value'), return that.
         - If the user mentions a specific service, infer the most likely priority (e.g., 'implants' implies 'sentiment_dentist_skill').
-        - If the user explicitly mentions a priority (e.g., 'good value'), use that.
         - If the query is general, return an empty list.
         Return a single JSON list of strings.
         Query: "{query.message}"
@@ -112,13 +127,12 @@ def handle_chat(query: UserQuery):
         if filters:
             factually_filtered_clinics = []
             
-            # THE NEW SMART FILTERING LOGIC
-            is_specific_location = filters.get('location_name') and filters.get('location_type') == LocationType.TOWNSHIP
+            extracted_location = filters.get('location', '').lower()
+            is_specific_township = extracted_location in KNOWN_TOWNSHIPS
             
             for clinic in qualified_clinics:
                 match = True
-                # Only apply the township filter if the location type is correct
-                if is_specific_location and filters.get('location_name').lower() not in clinic.get('address', '').lower():
+                if is_specific_township and extracted_location not in clinic.get('address', '').lower():
                     match = False
                 
                 if filters.get('service') and not clinic.get(filters.get('service'), False):
@@ -128,6 +142,8 @@ def handle_chat(query: UserQuery):
                     factually_filtered_clinics.append(clinic)
             
             qualified_clinics = factually_filtered_clinics
+            if is_specific_township:
+                 print(f"Applied specific township filter for '{extracted_location}'.")
             print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
 
     top_clinics = []
@@ -166,7 +182,7 @@ def handle_chat(query: UserQuery):
         context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted like the example.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted.
 
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
