@@ -64,14 +64,12 @@ def handle_chat(query: UserQuery):
         
         # Step 2B: The Refiner Brain filters the high-quality list
         try:
-            # We need to simplify the context to ensure it fits within token limits
             context_for_refiner = []
             for clinic in quality_gated_clinics:
                 context_for_refiner.append({
                     "id": clinic.get("id"),
                     "name": clinic.get("name"),
                     "address": clinic.get("address"),
-                    # We only include boolean flags for services
                     "services": [k for k, v in clinic.items() if isinstance(v, bool) and v]
                 })
 
@@ -91,18 +89,15 @@ def handle_chat(query: UserQuery):
             """
             
             refiner_response = generation_model.generate_content(refiner_prompt)
-            # Clean up the response to get a valid JSON list
             json_text = refiner_response.text.strip().replace("```json", "").replace("```", "")
             matching_ids = json.loads(json_text)
             
-            # Create the final filtered list based on the IDs returned by the AI
             id_map = {clinic['id']: clinic for clinic in quality_gated_clinics}
             filtered_clinics = [id_map[id] for id in matching_ids if id in id_map]
             print(f"Refiner Brain returned {len(filtered_clinics)} matching clinics.")
 
         except Exception as e:
             print(f"Refiner Brain Error: {e}. Falling back to the quality-gated list.")
-            # If the AI fails for any reason, we gracefully fall back to the pre-filtered list
             filtered_clinics = quality_gated_clinics
     
     # STAGE 3: FINAL RANKING
@@ -133,4 +128,34 @@ def handle_chat(query: UserQuery):
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        context = "I'm sorry, I could not find any clini
+        # *** THIS IS THE CORRECTED LINE ***
+        context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
+
+    augmented_prompt = f"""
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted.
+
+    **CONTEXT (TOP CLINICS FOUND):**
+    ```json
+    {context}
+    ```
+    **--- EXAMPLE OF PERFECT RESPONSE ---**
+    Based on your criteria, here are my top recommendations:
+
+    🏆 **Top Choice: JDT Dental**
+    *   **Rating:** 4.9★ (1542 reviews)
+    *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
+    ---
+    
+    **MANDATORY RULES:**
+    1.  Emulate the tone and structure of the example.
+    2.  Use bullet points (`* `) for details.
+    3.  Add a blank line between each clinic block.
+    4.  Summarize operating hours concisely.
+    5.  Keep the "Why it's great" and "My Recommendation" sections brief.
+    """
+    
+    final_response = generation_model.generate_content(augmented_prompt)
+
+    return {"response": final_response.text}
