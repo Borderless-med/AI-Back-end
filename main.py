@@ -31,9 +31,14 @@ class UserQuery(BaseModel):
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
+class LocationType(str, Enum):
+    TOWNSHIP = "township"
+    REGION = "region"
+
 class UserIntent(BaseModel):
-    service: Optional[ServiceEnum] = Field(None, description="If the user mentions a specific dental service, extract it. Map common terms to the enum value (e.g., 'implants' -> 'dental_implant', 'cap' -> 'dental_crown').")
-    township: Optional[str] = Field(None, description="If the user mentions a specific township or area, extract the name of the location.")
+    service: Optional[ServiceEnum] = Field(None, description="If the user mentions a specific dental service, extract it. Map common terms to the enum value (e.g., 'implants' -> 'dental_implant').")
+    location_name: Optional[str] = Field(None, description="If the user mentions a location, extract its name (e.g., 'Permas Jaya', 'JB', 'Johor Bahru').")
+    location_type: Optional[LocationType] = Field(None, description="Classify the extracted location. Specific, local areas are 'township'. Broad areas like cities (e.g., 'JB', 'Johor Bahru') or countries are 'region'.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -47,35 +52,31 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
     # STAGE 1: DUAL-STREAM BRAIN ANALYSIS
-    
-    # -- Stream 1: The Factual Brain (Hard Filters) --
     filters = {}
+    ranking_priorities = []
+    
     try:
+        # Factual Brain now also classifies location type
         factual_response = factual_brain_model.generate_content(
-            f"Extract entities from the user's query based on the tool schema. Query: '{query.message}'",
+            f"Extract entities from the user's query. Classify the location type carefully. Query: '{query.message}'",
             tools=[UserIntent]
         )
         function_call = factual_response.candidates[0].content.parts[0].function_call
         if function_call:
             args = function_call.args
-            if args.get('service'):
-                filters['services'] = [args.get('service')]
-            if args.get('township'):
-                filters['township'] = args.get('township')
-        print(f"Factual Brain extracted filters: {filters}")
+            # We now store all extracted args for later use
+            filters = {k: v for k, v in args.items() if v is not None}
+        print(f"Factual Brain extracted: {filters}")
     except Exception as e:
         print(f"Factual Brain Error: {e}.")
         filters = {}
 
-    # -- Stream 2: The Ranking Brain (Ranking Priorities) --
-    ranking_priorities = []
     try:
         ranking_prompt = f"""
-        Analyze the user's query to determine their sentimental priorities for ranking clinics.
-        The available priorities are: 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience', 'sentiment_pain_management'.
-        - If the user explicitly mentions a priority (e.g., 'good value', 'high quality', 'easy to get to'), return a ranked list of the corresponding column names.
-        - If the user mentions a specific service, infer the most likely priority (e.g., 'implants' implies 'sentiment_dentist_skill', 'whitening' implies 'sentiment_cost_value').
-        - If the query is general (e.g., 'good dentist'), return an empty list.
+        Analyze the user's query for sentimental priorities for ranking clinics ('sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience', 'sentiment_pain_management').
+        - If the user mentions a specific service, infer the most likely priority (e.g., 'implants' implies 'sentiment_dentist_skill').
+        - If the user explicitly mentions a priority (e.g., 'good value'), use that.
+        - If the query is general, return an empty list.
         Return a single JSON list of strings.
         Query: "{query.message}"
         """
@@ -90,7 +91,7 @@ def handle_chat(query: UserQuery):
 
     # STAGE 2: SEMANTIC SEARCH
     candidate_clinics = []
-    print("Performing initial semantic search with a wider net...")
+    print("Performing initial semantic search...")
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
         query_embedding = query_embedding_response['embedding']
@@ -110,30 +111,33 @@ def handle_chat(query: UserQuery):
 
         if filters:
             factually_filtered_clinics = []
+            
+            # THE NEW SMART FILTERING LOGIC
+            is_specific_location = filters.get('location_name') and filters.get('location_type') == LocationType.TOWNSHIP
+            
             for clinic in qualified_clinics:
                 match = True
-                if filters.get('township') and filters.get('township').lower() not in clinic.get('address', '').lower():
+                # Only apply the township filter if the location type is correct
+                if is_specific_location and filters.get('location_name').lower() not in clinic.get('address', '').lower():
                     match = False
-                if filters.get('services'):
-                    for service in filters.get('services'):
-                        if not clinic.get(service, False):
-                            match = False
-                            break
-                if match: factually_filtered_clinics.append(clinic)
+                
+                if filters.get('service') and not clinic.get(filters.get('service'), False):
+                    match = False
+                
+                if match:
+                    factually_filtered_clinics.append(clinic)
+            
             qualified_clinics = factually_filtered_clinics
             print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
 
     top_clinics = []
     if qualified_clinics:
-        # The Decision Engine for Ranking
         if ranking_priorities:
-            # --- SENTIMENT-FIRST RANKING for specific needs ---
             print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
             ranking_keys = ranking_priorities + ['rating', 'reviews']
             ranking_keys = list(dict.fromkeys(ranking_keys))
             ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in ranking_keys), reverse=True)
         else:
-            # --- OBJECTIVE-FIRST RANKING for general/location queries ---
             print("Applying OBJECTIVE-FIRST weighted score.")
             max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
             for clinic in qualified_clinics:
@@ -176,14 +180,6 @@ def handle_chat(query: UserQuery):
     *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
     *   **Hours:** Daily: 9:00 AM – 6:00 PM
     *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
-
-    🌟 **Excellent Alternatives:**
-
-    **Austin Dental Group (Mount Austin)**
-    *   **Rating:** 4.9★ (1085 reviews)
-    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
     ---
     
     **MANDATORY RULES:**
