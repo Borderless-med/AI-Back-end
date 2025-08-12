@@ -19,12 +19,21 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
+factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models ---
+# --- Pydantic Data Models & Enum ---
 class UserQuery(BaseModel):
     message: str
+
+class ServiceEnum(str, Enum):
+    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
+
+class UserIntent(BaseModel):
+    service: Optional[ServiceEnum] = Field(None, description="If the user mentions a specific dental service, extract it. Map common terms to the enum value (e.g., 'implants' -> 'dental_implant', 'cap' -> 'dental_crown').")
+    township: Optional[str] = Field(None, description="If the user mentions a specific township or area, extract the name of the location.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -37,9 +46,48 @@ def read_root():
 def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---\nUser Query: '{query.message}'")
 
-    # STAGE 1: ALWAYS START WITH A BROAD SEMANTIC SEARCH
+    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS
+    filters = {}
+    ranking_priorities = []
+    
+    try:
+        factual_response = factual_brain_model.generate_content(
+            f"Extract entities from the user's query based on the tool schema. Query: '{query.message}'",
+            tools=[UserIntent]
+        )
+        function_call = factual_response.candidates[0].content.parts[0].function_call
+        if function_call:
+            args = function_call.args
+            if args.get('service'):
+                filters['services'] = [args.get('service')]
+            if args.get('township'):
+                filters['township'] = args.get('township')
+        print(f"Factual Brain extracted filters: {filters}")
+    except Exception as e:
+        print(f"Factual Brain Error: {e}.")
+        filters = {}
+
+    try:
+        ranking_prompt = f"""
+        Analyze the user's query to determine their sentimental priorities for ranking clinics.
+        The available priorities are: 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience', 'sentiment_pain_management'.
+        - If the user explicitly mentions a priority (e.g., 'good value', 'high quality'), return a ranked list of the corresponding column names.
+        - If the user mentions a specific service, infer the most likely priority (e.g., 'implants' implies 'sentiment_dentist_skill', 'whitening' implies 'sentiment_cost_value').
+        - If the query is general (e.g., 'good dentist'), return an empty list.
+        Return a single JSON list of strings.
+        Query: "{query.message}"
+        """
+        ranking_response = ranking_brain_model.generate_content(ranking_prompt)
+        json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
+        ranking_priorities = json.loads(json_text)
+        print(f"Ranking Brain determined priorities: {ranking_priorities}")
+    except Exception as e:
+        print(f"Ranking Brain Error: {e}.")
+        ranking_priorities = []
+
+    # STAGE 2: ROBUST SEMANTIC SEARCH
     candidate_clinics = []
-    print("Performing initial semantic search to gather context...")
+    print("Performing initial semantic search...")
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
         query_embedding_list = query_embedding_response['embedding']
@@ -47,7 +95,7 @@ def handle_chat(query: UserQuery):
         # Convert the list to the string format that the new Supabase function expects
         query_embedding_text = "[" + ",".join(map(str, query_embedding_list)) + "]"
 
-        # Call the RPC function, now sending the text version of the embedding
+        # Call the RPC function with the text version of the embedding
         db_response = supabase.rpc('match_clinics_simple', {
             'query_embedding_text': query_embedding_text, 
             'match_count': 75
@@ -58,60 +106,47 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 2: THE "REFINER BRAIN" APPLIES HARD FILTERS
-    filtered_clinics = []
+    # STAGE 3: FILTERING AND DYNAMIC RANKING
+    qualified_clinics = []
     if candidate_clinics:
-        print("Applying Quality Gate and sending to Refiner Brain...")
-        quality_gated_clinics = []
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
-                quality_gated_clinics.append(clinic)
-        print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
-        
-        try:
-            context_for_refiner = []
-            for clinic in quality_gated_clinics:
-                context_for_refiner.append({
-                    "id": clinic.get("id"),
-                    "name": clinic.get("name"),
-                    "address": clinic.get("address"),
-                    "services": [k for k, v in clinic.items() if isinstance(v, bool) and v]
-                })
+                qualified_clinics.append(clinic)
+        print(f"Found {len(qualified_clinics)} candidates after applying Quality Gate.")
 
-            refiner_prompt = f"""
-            You are a strict data filtering engine. Your only job is to take a user's query and a list of clinics, and return a new list containing ONLY the clinics that meet the user's hard constraints.
-            **USER'S QUERY:** "{query.message}"
-            **LIST OF CLINICS TO FILTER (in JSON format):** {json.dumps(context_for_refiner, indent=2)}
-            **YOUR TASK:**
-            1.  Identify all specific, non-negotiable constraints from the user's query (locations or specific dental services).
-            2.  Carefully check each clinic. A clinic is a match ONLY if it meets ALL constraints. Location matching is case-insensitive.
-            3.  Your final output MUST be ONLY a valid JSON list of the matching clinic IDs, like `[12, 45, 98]`. If no clinics match, return an empty list `[]`.
-            """
-            
-            refiner_response = generation_model.generate_content(refiner_prompt)
-            json_text = refiner_response.text.strip().replace("```json", "").replace("```", "")
-            matching_ids = json.loads(json_text)
-            
-            id_map = {clinic['id']: clinic for clinic in quality_gated_clinics}
-            filtered_clinics = [id_map[id] for id in matching_ids if id in id_map]
-            print(f"Refiner Brain returned {len(filtered_clinics)} matching clinics.")
+        if filters:
+            factually_filtered_clinics = []
+            for clinic in qualified_clinics:
+                match = True
+                if filters.get('township') and filters.get('township').lower() not in clinic.get('address', '').lower():
+                    match = False
+                if filters.get('services'):
+                    for service in filters.get('services'):
+                        if not clinic.get(service, False):
+                            match = False
+                            break
+                if match:
+                    factually_filtered_clinics.append(clinic)
+            qualified_clinics = factually_filtered_clinics
+            print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
 
-        except Exception as e:
-            print(f"Refiner Brain Error: {e}. Falling back to the quality-gated list.")
-            filtered_clinics = quality_gated_clinics
-    
-    # STAGE 3: FINAL RANKING
     top_clinics = []
-    if filtered_clinics:
-        print("Calculating weighted quality scores for the final list...")
-        max_reviews = max([c.get('reviews', 1) for c in filtered_clinics]) or 1
+    if qualified_clinics:
+        # The Decision Engine for Ranking
+        if ranking_priorities:
+            print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
+            ranking_keys = ranking_priorities + ['rating', 'reviews']
+            ranking_keys = list(dict.fromkeys(ranking_keys))
+            ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in ranking_keys), reverse=True)
+        else:
+            print("Applying OBJECTIVE-FIRST weighted score.")
+            max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
+            for clinic in qualified_clinics:
+                norm_rating = (clinic.get('rating', 0) - 1) / 4.0
+                norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
+                clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
+            ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         
-        for clinic in filtered_clinics:
-            norm_rating = (clinic.get('rating', 0) - 1) / 4.0
-            norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
-            clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
-        
-        ranked_clinics = sorted(filtered_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
@@ -131,19 +166,30 @@ def handle_chat(query: UserQuery):
         context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted like the example.
+
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
     {context}
     ```
     **--- EXAMPLE OF PERFECT RESPONSE ---**
     Based on your criteria, here are my top recommendations:
+
     🏆 **Top Choice: JDT Dental**
     *   **Rating:** 4.9★ (1542 reviews)
     *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
     *   **Hours:** Daily: 9:00 AM – 6:00 PM
     *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
+
+    🌟 **Excellent Alternatives:**
+
+    **Austin Dental Group (Mount Austin)**
+    *   **Rating:** 4.9★ (1085 reviews)
+    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
+    *   **Hours:** Daily: 9:00 AM – 6:00 PM
+    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
     ---
+    
     **MANDATORY RULES:**
     1.  Emulate the tone and structure of the example.
     2.  Use bullet points (`* `) for details.
