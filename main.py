@@ -24,9 +24,15 @@ ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum ---
+# --- Pydantic Data Models & Enum (This is Task 1.2) ---
+# Defines a single message in the conversation history
+class ChatMessage(BaseModel):
+    role: str  # Will be 'user' or 'model'
+    content: str
+
+# Defines the new shape of the incoming request, expecting a history
 class UserQuery(BaseModel):
-    message: str
+    history: List[ChatMessage]
 
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
@@ -43,18 +49,35 @@ def read_root():
     return {"message": "Hello!"}
 
 @app.post("/chat")
+# This is the core of Task 1.3
 def handle_chat(query: UserQuery):
-    print(f"\n--- New Request ---\nUser Query: '{query.message}'")
+    # Process the incoming history
+    if not query.history:
+        return {"response": "I'm sorry, I received an empty query."}
+    
+    latest_user_message = query.history[-1].content
+    
+    conversation_history_for_prompt = ""
+    for message in query.history[:-1]:
+        conversation_history_for_prompt += f"{message.role}: {message.content}\n"
 
-    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS
+    print(f"\n--- New Request ---")
+    print(f"Conversation History Context:\n{conversation_history_for_prompt}")
+    print(f"Latest User Query: '{latest_user_message}'")
+
+    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS (Now with history context)
     filters = {}
     ranking_priorities = []
     
     try:
-        factual_response = factual_brain_model.generate_content(
-            f"Extract entities from the user's query based on the tool schema. Query: '{query.message}'",
-            tools=[UserIntent]
-        )
+        factual_prompt = f"""
+        Given the conversation history, analyze the LATEST USER QUERY to extract entities.
+        Conversation History:
+        {conversation_history_for_prompt}
+        ---
+        Latest User Query: "{latest_user_message}"
+        """
+        factual_response = factual_brain_model.generate_content(factual_prompt, tools=[UserIntent])
         function_call = factual_response.candidates[0].content.parts[0].function_call
         if function_call:
             args = function_call.args
@@ -69,13 +92,17 @@ def handle_chat(query: UserQuery):
 
     try:
         ranking_prompt = f"""
-        Analyze the user's query to determine their sentimental priorities for ranking clinics.
-        The available priorities are: 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience', 'sentiment_pain_management'.
-        - If the user explicitly mentions a priority (e.g., 'good value', 'high quality'), return a ranked list of the corresponding column names.
-        - If the user mentions a specific service, infer the most likely priority (e.g., 'implants' implies 'sentiment_dentist_skill', 'whitening' implies 'sentiment_cost_value').
-        - If the query is general (e.g., 'good dentist'), return an empty list.
+        Analyze the LATEST USER QUERY to determine sentimental priorities for ranking. Use the history for context.
+        Available priorities: 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
+        - If the query has an explicit priority (e.g., 'good value'), return that.
+        - If the query mentions a service, infer the priority (e.g., 'implants' -> 'sentiment_dentist_skill').
+        - If the query is general, return an empty list.
         Return a single JSON list of strings.
-        Query: "{query.message}"
+        
+        Conversation History:
+        {conversation_history_for_prompt}
+        ---
+        Latest User Query: "{latest_user_message}"
         """
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
         json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
@@ -89,7 +116,7 @@ def handle_chat(query: UserQuery):
     candidate_clinics = []
     print("Performing initial semantic search...")
     try:
-        query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
+        query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
         query_embedding_list = query_embedding_response['embedding']
         
         query_embedding_text = "[" + ",".join(map(str, query_embedding_list)) + "]"
@@ -163,36 +190,35 @@ def handle_chat(query: UserQuery):
         context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted like the example.
+    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven response.
+    Use the conversation history to understand the context of the user's latest question.
+    Your response must be friendly, professional, and perfectly formatted like the example provided.
 
-    **CONTEXT (TOP CLINICS FOUND):**
+    **CONVERSATION HISTORY:**
+    {conversation_history_for_prompt}
+
+    **DATABASE SEARCH RESULTS (for the latest query):**
     ```json
     {context}
     ```
-    **--- EXAMPLE OF PERFECT RESPONSE ---**
+    
+    **LATEST USER QUESTION:**
+    "{latest_user_message}"
+
+    ---
+    **YOUR TASK:**
+    Based on all the information above, provide a helpful and context-aware answer to the LATEST USER QUESTION.
+    If the latest query was a search for clinics, format your response like the example.
+    If the latest query was a follow-up, answer it naturally.
+
+    **--- EXAMPLE OF PERFECT RESPONSE FORMATTING (for a search query) ---**
     Based on your criteria, here are my top recommendations:
 
     🏆 **Top Choice: JDT Dental**
     *   **Rating:** 4.9★ (1542 reviews)
     *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
-
-    🌟 **Excellent Alternatives:**
-
-    **Austin Dental Group (Mount Austin)**
-    *   **Rating:** 4.9★ (1085 reviews)
-    *   **Address:** 33G, Jalan Mutiara Emas 10/19, Taman Mount Austin, Johor Bahru
-    *   **Hours:** Daily: 9:00 AM – 6:00 PM
-    *   **Why it's great:** Another highly-rated option with a very strong track record and convenient daily hours.
+    *   **Why it's great:** An exceptionally high rating...
     ---
-    
-    **MANDATORY RULES:**
-    1.  Emulate the tone and structure of the example.
-    2.  Use bullet points (`* `) for details.
-    3.  Add a blank line between each clinic block.
-    4.  Summarize operating hours concisely.
-    5.  Keep the "Why it's great" and "My Recommendation" sections brief.
     """
     
     final_response = generation_model.generate_content(augmented_prompt)
