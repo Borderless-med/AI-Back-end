@@ -19,7 +19,6 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
-# We now only need one model for generation, one for embedding
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
@@ -43,9 +42,17 @@ def handle_chat(query: UserQuery):
     print("Performing initial semantic search to gather context...")
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=query.message, task_type="RETRIEVAL_QUERY")
-        query_embedding = query_embedding_response['embedding']
-        # We cast a wide net to ensure all potential candidates are included
-        db_response = supabase.rpc('match_clinics_simple', {'query_embedding': query_embedding, 'match_count': 75}).execute()
+        query_embedding_list = query_embedding_response['embedding']
+        
+        # Convert the list to the string format pgvector expects
+        query_embedding_str = "[" + ",".join(map(str, query_embedding_list)) + "]"
+
+        # We cast a wide net and send the formatted string
+        db_response = supabase.rpc('match_clinics_simple', {
+            'query_embedding': query_embedding_str, 
+            'match_count': 75
+        }).execute()
+        
         candidate_clinics = db_response.data if db_response.data else []
         print(f"Found {len(candidate_clinics)} candidates from semantic search.")
     except Exception as e:
@@ -55,14 +62,12 @@ def handle_chat(query: UserQuery):
     filtered_clinics = []
     if candidate_clinics:
         print("Applying Quality Gate and sending to Refiner Brain...")
-        # Step 2A: Apply the non-negotiable Quality Gate first
         quality_gated_clinics = []
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
                 quality_gated_clinics.append(clinic)
         print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
         
-        # Step 2B: The Refiner Brain filters the high-quality list
         try:
             context_for_refiner = []
             for clinic in quality_gated_clinics:
@@ -75,17 +80,12 @@ def handle_chat(query: UserQuery):
 
             refiner_prompt = f"""
             You are a strict data filtering engine. Your only job is to take a user's query and a list of clinics, and return a new list containing ONLY the clinics that meet the user's hard constraints.
-
-            **USER'S QUERY:**
-            "{query.message}"
-
-            **LIST OF CLINICS TO FILTER (in JSON format):**
-            {json.dumps(context_for_refiner, indent=2)}
-
+            **USER'S QUERY:** "{query.message}"
+            **LIST OF CLINICS TO FILTER (in JSON format):** {json.dumps(context_for_refiner, indent=2)}
             **YOUR TASK:**
-            1.  Identify all specific, non-negotiable constraints from the user's query. These are typically locations (e.g., "Permas Jaya") or specific dental services (e.g., "braces", "implants").
-            2.  Carefully check each clinic in the provided list. A clinic is a match ONLY if it meets ALL of the user's constraints. Location matching should be case-insensitive. Service matching requires the exact service name to be in the clinic's "services" list.
-            3.  Your final output MUST be ONLY a valid JSON list of the matching clinic IDs, like `[12, 45, 98]`. Do not include any other text or explanation. If no clinics match, return an empty list `[]`.
+            1.  Identify all specific, non-negotiable constraints from the user's query (locations or specific dental services).
+            2.  Carefully check each clinic. A clinic is a match ONLY if it meets ALL constraints. Location matching is case-insensitive.
+            3.  Your final output MUST be ONLY a valid JSON list of the matching clinic IDs, like `[12, 45, 98]`. If no clinics match, return an empty list `[]`.
             """
             
             refiner_response = generation_model.generate_content(refiner_prompt)
@@ -128,26 +128,22 @@ def handle_chat(query: UserQuery):
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        # *** THIS IS THE CORRECTED LINE ***
         context = "I'm sorry, I could not find any clinics that matched your specific search criteria after applying our quality standards."
 
     augmented_prompt = f"""
     You are an expert dental clinic assistant. Your task is to generate a concise, data-driven recommendation based on the provided JSON context. Your response must be friendly, professional, and perfectly formatted.
-
     **CONTEXT (TOP CLINICS FOUND):**
     ```json
     {context}
     ```
     **--- EXAMPLE OF PERFECT RESPONSE ---**
     Based on your criteria, here are my top recommendations:
-
     🏆 **Top Choice: JDT Dental**
     *   **Rating:** 4.9★ (1542 reviews)
     *   **Address:** 41B, Jalan Kuning 2, Taman Pelangi, Johor Bahru
     *   **Hours:** Daily: 9:00 AM – 6:00 PM
     *   **Why it's great:** An exceptionally high rating combined with a massive number of reviews indicates consistently excellent service.
     ---
-    
     **MANDATORY RULES:**
     1.  Emulate the tone and structure of the example.
     2.  Use bullet points (`* `) for details.
