@@ -226,7 +226,7 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-    # STAGE 4: FINAL RESPONSE GENERATION (The Final, Simplified "Best Effort" Strategy)
+    # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -235,7 +235,7 @@ def handle_chat(query: UserQuery):
              clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     
-    # THE FINAL PROMPT: Simplified, principle-based, and more reliable.
+    # THE FIX IS HERE: The `{}` has been replaced with `{{}}` to escape the characters correctly.
     augmented_prompt = f"""
     You are a helpful and expert AI dental concierge. Your goal is to provide a clear, data-driven answer to the user's question.
 
@@ -259,10 +259,10 @@ def handle_chat(query: UserQuery):
     
     3.  **Be Honest About Limitations:** If the user asks for something you can't objectively prove from the data (like "best", "affordable", or "cheapest"), you MUST include a brief, friendly note explaining this. For example: "Please note: while I can find highly-rated clinics, 'best' is subjective and I recommend checking recent reviews." or "I've ranked these based on positive sentiment about value, but I don't have access to real-time pricing to guarantee affordability."
 
-    4.  **Handle "No Results":** If the DATABASE SEARCH RESULTS are empty (`{}`), you MUST inform the user clearly and politely that you could not find any clinics that matched their specific criteria.
+    4.  **Handle "No Results":** If the DATABASE SEARCH RESULTS are empty (`{{}}`), you MUST inform the user clearly and politely that you could not find any clinics that matched their specific criteria.
     ---
     """
     
     final_response = generation_model.generate_content(augmented_prompt)
 
-    return {"response": final_response.text, "applied_filters": final_filters}
+    return {"response": final_response.text, "applied_filters": final_filters}```
