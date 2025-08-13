@@ -18,14 +18,13 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- AI Models ---
+# --- AI Models (Query Planner has been REMOVED) ---
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-query_planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum ---
+# --- Pydantic Data Models & Enum (Query Planner models have been REMOVED) ---
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -41,18 +40,57 @@ class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
 
-class FilterAction(str, Enum):
-    MERGE = "MERGE"
-    REPLACE = "REPLACE"
-
-class QueryPlan(BaseModel):
-    action: FilterAction = Field(..., description="Decide whether to MERGE new filters with old ones or REPLACE them.")
-    reason: str = Field(..., description="A brief explanation for the decision (e.g., 'User is refining their search' or 'User is changing the topic').")
-
 # --- FastAPI App ---
 app = FastAPI()
 
-RESET_KEYWORDS = ["never mind", "start over", "reset", "forget that", "actually"]
+# FINAL, CURATED LIST of reset keywords. This is the core of the deterministic logic.
+RESET_KEYWORDS = [
+    # --- Direct Commands & Unambiguous Phrases ---
+    "never mind", 
+    "start over", 
+    "begin again",
+    "start fresh",
+    "start anew",
+    "begin from scratch",
+    "do over",
+    "reset",
+    "restart",
+    "reboot",
+    "forget that", 
+    "forget all that",
+    "clear filters",
+    "let's try that again",
+    "take two",
+    "start from the top",
+    "do-over",
+    
+    # --- Explicit Topic & Course Changes ---
+    "change the subject",
+    "new topic",
+    "new search",
+    "change course",
+    "new direction",
+    "switch gears",
+    "let's pivot",
+    "about face",
+    "u-turn",
+    "take another tack",
+
+    # --- Metaphors for Starting Over ---
+    "clean slate",
+    "wipe the slate clean",
+    "blank canvas",
+    "empty page",
+    "clean sheet",
+    "back to square one",
+    "back to the drawing board",
+    "new chapter",
+    "fresh chapter",
+
+    # --- Common Conversational Flow ---
+    "actually", 
+    "how about something else",
+]
 
 @app.get("/")
 def read_root():
@@ -74,6 +112,7 @@ def handle_chat(query: UserQuery):
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Previous Filters: {previous_filters}")
 
+    # STAGE 1A: Factual Brain (Unchanged)
     current_filters = {}
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
@@ -88,54 +127,21 @@ def handle_chat(query: UserQuery):
         print(f"Factual Brain Error: {e}")
         current_filters = {}
 
-    final_filters = previous_filters.copy()
+    # STAGE 1B: The Deterministic Planner (Replaces the AI Planner)
+    final_filters = {}
     user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
-    if current_filters or (user_wants_to_reset and previous_filters):
-        try:
-            planner_prompt = f"""
-            Your job is to decide if a user wants to MERGE filters or REPLACE them.
-            
-            **Rules:**
-            - REPLACE if the user signals a topic change. Keywords like "never mind", "start over", "actually", or asking for a completely different service (e.g., previous was 'braces', new is 'whitening') mean REPLACE.
-            - MERGE if the user is refining their current search. Keywords like "what about", "in", "which of those" or adding a location to a service mean MERGE.
-
-            **Analysis:**
-            - Previous Filters: {json.dumps(previous_filters)}
-            - Latest User Query: "{latest_user_message}"
-            - New Entities Found: {json.dumps(current_filters)}
-
-            Does this query indicate a topic change (REPLACE) or a refinement (MERGE)?
-            """
-            planner_response = query_planner_model.generate_content(planner_prompt, tools=[QueryPlan])
-            
-            # THE FIX: Add defensive checks to ensure the AI response is valid before using it.
-            plan_tool_call = planner_response.candidates[0].content.parts[0].function_call
-            
-            if plan_tool_call and plan_tool_call.args and plan_tool_call.args.get('action'):
-                plan_args = plan_tool_call.args
-                action = plan_args.get('action')
-                reason = plan_args.get('reason', 'No reason provided.')
-                print(f"Query Planner decided: {action}. Reason: {reason}")
-
-                if action == 'REPLACE':
-                    final_filters = current_filters
-                else: # MERGE
-                    final_filters.update(current_filters)
-            else:
-                # SAFE DEFAULT: If the AI fails to provide a clear plan, log it and make a safe choice.
-                # If the user is adding info, the safest choice is to MERGE.
-                print("Query Planner Warning: AI did not return a valid plan. Defaulting to MERGE.")
-                final_filters.update(current_filters)
-
-        except Exception as e:
-            print(f"Query Planner Error: {e}. Defaulting to REPLACE on critical error.")
-            final_filters = current_filters
+    if user_wants_to_reset:
+        print("Deterministic Planner decided: REPLACE (reset keyword found).")
+        final_filters = current_filters
+    else:
+        print("Deterministic Planner decided: MERGE (default action).")
+        final_filters = previous_filters.copy()
+        final_filters.update(current_filters)
     
     print(f"Final Filters to be applied: {final_filters}")
 
-    # ... The rest of the file is unchanged ...
-
+    # STAGE 1C: Ranking Brain (Unchanged)
     ranking_priorities = []
     try:
         ranking_prompt = f"""
@@ -165,6 +171,7 @@ def handle_chat(query: UserQuery):
         print(f"Ranking Brain Error: {e}")
         ranking_priorities = []
 
+    # STAGE 2: Semantic Search (Unchanged)
     candidate_clinics = []
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
@@ -176,6 +183,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
+    # STAGE 3: Filtering and Ranking (Unchanged)
     qualified_clinics = []
     if candidate_clinics:
         for clinic in candidate_clinics:
@@ -217,6 +225,7 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
+    # STAGE 4: Final Response Generation (Unchanged)
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
