@@ -45,53 +45,13 @@ app = FastAPI()
 
 # Final, curated list of reset keywords
 RESET_KEYWORDS = [
-    # --- Direct Commands & Unambiguous Phrases ---
-    "never mind", 
-    "start over", 
-    "begin again",
-    "start fresh",
-    "start anew",
-    "begin from scratch",
-    "do over",
-    "reset",
-    "restart",
-    "reboot",
-    "forget that", 
-    "forget all that",
-    "clear filters",
-    "let's try that again",
-    "take two",
-    "start from the top",
-    "do-over",
-    
-    # --- Explicit Topic & Course Changes ---
-    "change the subject",
-    "new topic",
-    "new search",
-    "change course",
-    "new direction",
-    "switch gears",
-    "let's pivot",
-    "about face",
-    "u-turn",
-    "take another tack",
-
-    # --- Metaphors for Starting Over ---
-    "clean slate",
-    "wipe the slate clean",
-    "blank canvas",
-    "empty page",
-    "clean sheet",
-    "back to square one",
-    "back to the drawing board",
-    "new chapter",
-    "fresh chapter",
-
-    # --- Common Conversational Flow ---
-    "actually", 
-    "how about something else",
+    "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
+    "clear filters", "let's try that again", "take two", "start from the top", "do-over",
+    "change the subject", "new topic", "new search", "change course", "new direction",
+    "switch gears", "let's pivot", "about face", "u-turn", "take another tack", "clean slate",
+    "wipe the slate clean", "blank canvas", "empty page", "clean sheet", "back to square one",
+    "back to the drawing board", "new chapter", "fresh chapter", "actually", "how about something else",
 ]
-
 
 @app.get("/")
 def read_root():
@@ -118,11 +78,14 @@ def handle_chat(query: UserQuery):
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
-        function_call = factual_response.candidates.content.parts.function_call
-        if function_call and function_call.args:
-            args = function_call.args
-            if args.get('service'): current_filters['services'] = [args.get('service')]
-            if args.get('township'): current_filters['township'] = args.get('township')
+        
+        # THE FIX 1: More robust parsing to handle API response structure changes.
+        if factual_response.candidates and factual_response.candidates[0].content.parts:
+            function_call = factual_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args:
+                args = function_call.args
+                if args.get('service'): current_filters['services'] = [args.get('service')]
+                if args.get('township'): current_filters['township'] = args.get('township')
         print(f"Factual Brain extracted: {current_filters}")
     except (IndexError, AttributeError, Exception) as e:
         print(f"Factual Brain Error: {e}")
@@ -153,11 +116,8 @@ def handle_chat(query: UserQuery):
         - For cosmetic services ('whitening', 'veneers'), prioritize 'sentiment_cost_value'.
         - For location queries ('near', 'in'), prioritize 'sentiment_convenience'.
         - If the intent is ambiguous or general, return an empty list [].
-
-        History:
-        {conversation_history_for_prompt}
+        History: {conversation_history_for_prompt}
         Latest Query: "{latest_user_message}"
-
         Respond with ONLY the JSON list. Do not add any other text or markdown.
         """
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
@@ -224,7 +184,9 @@ def handle_chat(query: UserQuery):
             ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         
         top_clinics = ranked_clinics[:3]
-        print(f"Ranking complete. Top clinic: {top_clinics['name'] if top_clinics else 'N/A'}")
+        
+        # THE FIX 2: Correctly access the *first item* of the list before getting its name.
+        print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
@@ -237,27 +199,19 @@ def handle_chat(query: UserQuery):
     
     augmented_prompt = f"""
     You are a helpful and expert AI dental concierge. Your goal is to provide a clear, data-driven answer to the user's question.
-
     **Conversation History (for context):**
     {conversation_history_for_prompt}
-    
     **User's Latest Question:**
     "{latest_user_message}"
-
     **Data You Must Use To Answer:**
     ```json
     {context}
     ```
-
     ---
     **Your Task:**
-
     1.  **Answer the User's Question:** Directly address their latest query using the data provided.
-    
     2.  **Present the Data Clearly:** Format your response with clinic names, ratings, and addresses as bullet points.
-    
     3.  **Be Honest About Limitations:** If the user asks for something you can't objectively prove from the data (like "best", "affordable", or "cheapest"), you MUST include a brief, friendly note explaining this. For example: "Please note: while I can find highly-rated clinics, 'best' is subjective and I recommend checking recent reviews." or "I've ranked these based on positive sentiment about value, but I don't have access to real-time pricing to guarantee affordability."
-
     4.  **Handle "No Results":** If the DATABASE SEARCH RESULTS are empty (`{{}}`), you MUST inform the user clearly and politely that you could not find any clinics that matched their specific criteria.
     ---
     """
