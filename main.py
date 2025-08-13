@@ -18,13 +18,13 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- AI Models (Query Planner has been REMOVED) ---
+# --- AI Models ---
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- Pydantic Data Models & Enum (Query Planner models have been REMOVED) ---
+# --- Pydantic Data Models & Enum ---
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -43,7 +43,7 @@ class UserIntent(BaseModel):
 # --- FastAPI App ---
 app = FastAPI()
 
-# FINAL, CURATED LIST of reset keywords. This is the core of the deterministic logic.
+# Final, curated list of reset keywords
 RESET_KEYWORDS = [
     # --- Direct Commands & Unambiguous Phrases ---
     "never mind", 
@@ -92,6 +92,7 @@ RESET_KEYWORDS = [
     "how about something else",
 ]
 
+
 @app.get("/")
 def read_root():
     return {"message": "Hello!"}
@@ -112,7 +113,7 @@ def handle_chat(query: UserQuery):
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Previous Filters: {previous_filters}")
 
-    # STAGE 1A: Factual Brain (Unchanged)
+    # STAGE 1A: Factual Brain
     current_filters = {}
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
@@ -127,7 +128,7 @@ def handle_chat(query: UserQuery):
         print(f"Factual Brain Error: {e}")
         current_filters = {}
 
-    # STAGE 1B: The Deterministic Planner (Replaces the AI Planner)
+    # STAGE 1B: The Deterministic Planner
     final_filters = {}
     user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
@@ -141,7 +142,7 @@ def handle_chat(query: UserQuery):
     
     print(f"Final Filters to be applied: {final_filters}")
 
-    # STAGE 1C: Ranking Brain (Unchanged)
+    # STAGE 1C: Ranking Brain
     ranking_priorities = []
     try:
         ranking_prompt = f"""
@@ -171,7 +172,7 @@ def handle_chat(query: UserQuery):
         print(f"Ranking Brain Error: {e}")
         ranking_priorities = []
 
-    # STAGE 2: Semantic Search (Unchanged)
+    # STAGE 2: Semantic Search
     candidate_clinics = []
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
@@ -183,7 +184,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: Filtering and Ranking (Unchanged)
+    # STAGE 3: Filtering and Ranking
     qualified_clinics = []
     if candidate_clinics:
         for clinic in candidate_clinics:
@@ -225,7 +226,7 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-    # STAGE 4: Final Response Generation (Unchanged)
+    # STAGE 4: FINAL RESPONSE GENERATION (The "Best Effort" Strategy)
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -233,39 +234,53 @@ def handle_chat(query: UserQuery):
              clinic_info = { "name": clinic.get('name'), "address": clinic.get('address'), "rating": clinic.get('rating'), "reviews": clinic.get('reviews'), "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),}
              clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
-    else:
-        context = "I'm sorry, I could not find any clinics that matched your specific search criteria."
-
+    
+    # THE ONLY CHANGE IS HERE: This new prompt teaches the AI to be a helpful salesperson.
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a concise, data-driven response.
-    Use the conversation history for context. Your primary goal is to answer the LATEST USER QUESTION.
+    You are an expert dental clinic assistant. Your task is to generate a helpful, data-driven recommendation.
 
-    **CONVERSATION HISTORY:**
-    {conversation_history_for_prompt}
-
-    **DATABASE SEARCH RESULTS (Context for your answer):**
-    ```json
+    **CONTEXT:**
+    Here is the user's latest question and the top-ranked clinics my data engine found.
+    - LATEST USER QUESTION: "{latest_user_message}"
+    - DATABASE SEARCH RESULTS: ```json
     {context}
     ```
-    
-    **LATEST USER QUESTION:**
-    "{latest_user_message}"
 
     ---
-    **YOUR TASK:**
-    - Answer the LATEST USER QUESTION.
-    - If the question was a search, format your response like the example.
-    - If the question was a follow-up, answer it naturally.
+    **YOUR RESPONSE STRATEGY - THIS IS YOUR MOST IMPORTANT INSTRUCTION**
 
-    **--- EXAMPLE RESPONSE FORMAT (for a search query) ---**
+    You must follow this two-step logic:
+
+    1.  **Analyze the User's Request for Unverifiable Constraints:** Look for subjective words like "affordable", "best", "cheapest", or "top-rated". My database has sentiment scores, but it does NOT have objective proof for these things (like a 'price' column or an 'official_ranking' column).
+
+    2.  **Choose Your Response Path:**
+        *   **PATH A (The request is simple and verifiable):** If the user asks for something simple (e.g., "whitening clinics in Skudai"), generate a direct recommendation like the "Perfect Response" example below.
+        *   **PATH B (The request has an unverifiable constraint):** If the user asks for something you can't prove (e.g., "affordable whitening clinics"), you MUST follow this three-part structure:
+            1.  **State the Limitation:** Begin by clearly and concisely stating what you cannot guarantee. (e.g., "While I cannot verify pricing to guarantee 'affordability', here are some highly-rated clinics that offer teeth whitening.")
+            2.  **Present the "Best Effort" List:** Show the list of clinics from the DATABASE SEARCH RESULTS. These clinics match the *provable* parts of the query (e.g., they offer 'teeth whitening').
+            3.  **Explain the Ranking:** Briefly mention how the list was sorted to honor the user's intent. (e.g., "They are ranked based on positive user sentiment regarding value and quality.")
+
+    **--- EXAMPLE OF PERFECT RESPONSE (FOR PATH A) ---**
     Based on your criteria, here are my top recommendations:
     🏆 **Top Choice: JDT Dental**
     *   **Rating:** 4.9★ (1542 reviews)
     *   **Address:** ...
-    *   **Why it's great:** ...
+    *   **Why it's great:** An exceptionally high rating and a massive number of reviews indicate consistently excellent service.
     ---
     """
     
+    # If there are no clinics, we must give a helpful "no results" message.
+    if not top_clinics:
+        # Check if there was a constraint that might have caused the issue.
+        if "affordable" in latest_user_message or "cheapest" in latest_user_message:
+            context = "I do not have enough information to provide recommendations for affordable whitening clinics. My current database lacks pricing data and specific information on teeth whitening services offered by each clinic. To find affordable options, I suggest: 1. Online Search: Use search engines like Google, adding keywords like 'affordable teeth whitening [your location]' to refine your search... 2. Check Clinic Websites... 3. Compare Prices..."
+        else:
+            context = "I'm sorry, I could not find any clinics that matched your specific search criteria."
+        
+        # Override the main prompt if there are no clinics
+        augmented_prompt = context
+
+
     final_response = generation_model.generate_content(augmented_prompt)
 
     return {"response": final_response.text, "applied_filters": final_filters}
