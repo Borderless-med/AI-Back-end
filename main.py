@@ -226,7 +226,7 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-    # STAGE 4: FINAL RESPONSE GENERATION (The "Best Effort" Strategy)
+    # STAGE 4: FINAL RESPONSE GENERATION (The Final, Simplified "Best Effort" Strategy)
     context = ""
     if top_clinics:
         clinic_data_for_prompt = []
@@ -235,52 +235,34 @@ def handle_chat(query: UserQuery):
              clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     
-    # THE ONLY CHANGE IS HERE: This new prompt teaches the AI to be a helpful salesperson.
+    # THE FINAL PROMPT: Simplified, principle-based, and more reliable.
     augmented_prompt = f"""
-    You are an expert dental clinic assistant. Your task is to generate a helpful, data-driven recommendation.
+    You are a helpful and expert AI dental concierge. Your goal is to provide a clear, data-driven answer to the user's question.
 
-    **CONTEXT:**
-    Here is the user's latest question and the top-ranked clinics my data engine found.
-    - LATEST USER QUESTION: "{latest_user_message}"
-    - DATABASE SEARCH RESULTS: ```json
+    **Conversation History (for context):**
+    {conversation_history_for_prompt}
+    
+    **User's Latest Question:**
+    "{latest_user_message}"
+
+    **Data You Must Use To Answer:**
+    ```json
     {context}
     ```
 
     ---
-    **YOUR RESPONSE STRATEGY - THIS IS YOUR MOST IMPORTANT INSTRUCTION**
+    **Your Task:**
 
-    You must follow this two-step logic:
+    1.  **Answer the User's Question:** Directly address their latest query using the data provided.
+    
+    2.  **Present the Data Clearly:** Format your response with clinic names, ratings, and addresses as bullet points.
+    
+    3.  **Be Honest About Limitations:** If the user asks for something you can't objectively prove from the data (like "best", "affordable", or "cheapest"), you MUST include a brief, friendly note explaining this. For example: "Please note: while I can find highly-rated clinics, 'best' is subjective and I recommend checking recent reviews." or "I've ranked these based on positive sentiment about value, but I don't have access to real-time pricing to guarantee affordability."
 
-    1.  **Analyze the User's Request for Unverifiable Constraints:** Look for subjective words like "affordable", "best", "cheapest", or "top-rated". My database has sentiment scores, but it does NOT have objective proof for these things (like a 'price' column or an 'official_ranking' column).
-
-    2.  **Choose Your Response Path:**
-        *   **PATH A (The request is simple and verifiable):** If the user asks for something simple (e.g., "whitening clinics in Skudai"), generate a direct recommendation like the "Perfect Response" example below.
-        *   **PATH B (The request has an unverifiable constraint):** If the user asks for something you can't prove (e.g., "affordable whitening clinics"), you MUST follow this three-part structure:
-            1.  **State the Limitation:** Begin by clearly and concisely stating what you cannot guarantee. (e.g., "While I cannot verify pricing to guarantee 'affordability', here are some highly-rated clinics that offer teeth whitening.")
-            2.  **Present the "Best Effort" List:** Show the list of clinics from the DATABASE SEARCH RESULTS. These clinics match the *provable* parts of the query (e.g., they offer 'teeth whitening').
-            3.  **Explain the Ranking:** Briefly mention how the list was sorted to honor the user's intent. (e.g., "They are ranked based on positive user sentiment regarding value and quality.")
-
-    **--- EXAMPLE OF PERFECT RESPONSE (FOR PATH A) ---**
-    Based on your criteria, here are my top recommendations:
-    🏆 **Top Choice: JDT Dental**
-    *   **Rating:** 4.9★ (1542 reviews)
-    *   **Address:** ...
-    *   **Why it's great:** An exceptionally high rating and a massive number of reviews indicate consistently excellent service.
+    4.  **Handle "No Results":** If the DATABASE SEARCH RESULTS are empty (`{}`), you MUST inform the user clearly and politely that you could not find any clinics that matched their specific criteria.
     ---
     """
     
-    # If there are no clinics, we must give a helpful "no results" message.
-    if not top_clinics:
-        # Check if there was a constraint that might have caused the issue.
-        if "affordable" in latest_user_message or "cheapest" in latest_user_message:
-            context = "I do not have enough information to provide recommendations for affordable whitening clinics. My current database lacks pricing data and specific information on teeth whitening services offered by each clinic. To find affordable options, I suggest: 1. Online Search: Use search engines like Google, adding keywords like 'affordable teeth whitening [your location]' to refine your search... 2. Check Clinic Websites... 3. Compare Prices..."
-        else:
-            context = "I'm sorry, I could not find any clinics that matched your specific search criteria."
-        
-        # Override the main prompt if there are no clinics
-        augmented_prompt = context
-
-
     final_response = generation_model.generate_content(augmented_prompt)
 
     return {"response": final_response.text, "applied_filters": final_filters}
