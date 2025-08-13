@@ -21,7 +21,7 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # --- AI Models ---
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-query_planner_model = genai.GenerativeModel('gemini-1.5-flash-latest') # NEW: The Query Planner AI
+query_planner_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
@@ -32,7 +32,6 @@ class ChatMessage(BaseModel):
 
 class UserQuery(BaseModel):
     history: List[ChatMessage]
-    # UPGRADED: To remember the last set of applied filters
     applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
 
 class ServiceEnum(str, Enum):
@@ -42,19 +41,19 @@ class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
 
-# NEW: Pydantic models for the Query Planner's decision
 class FilterAction(str, Enum):
     MERGE = "MERGE"
     REPLACE = "REPLACE"
 
 class QueryPlan(BaseModel):
-    """The plan for how to handle filters based on user intent."""
     action: FilterAction = Field(..., description="Decide whether to MERGE new filters with old ones or REPLACE them.")
     reason: str = Field(..., description="A brief explanation for the decision (e.g., 'User is refining their search' or 'User is changing the topic').")
 
-
 # --- FastAPI App ---
 app = FastAPI()
+
+# LOGIC FIX 1: Define keywords that signal a desire to reset the search
+RESET_KEYWORDS = ["never mind", "start over", "reset", "forget that", "actually"]
 
 @app.get("/")
 def read_root():
@@ -65,7 +64,7 @@ def handle_chat(query: UserQuery):
     if not query.history:
         return {"response": "Error: History is empty."}
     
-    latest_user_message = query.history[-1].content
+    latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
     
     conversation_history_for_prompt = ""
@@ -76,7 +75,6 @@ def handle_chat(query: UserQuery):
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Previous Filters: {previous_filters}")
 
-    # STAGE 1A: FACTUAL BRAIN - Extract entities from the LATEST query
     current_filters = {}
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
@@ -91,18 +89,26 @@ def handle_chat(query: UserQuery):
         print(f"Factual Brain Error: {e}")
         current_filters = {}
 
-    # NEW STAGE 1B: QUERY PLANNER - Decide whether to MERGE or REPLACE filters
-    final_filters = previous_filters.copy() # Start with the old filters by default
-    if current_filters: # Only plan if the user asked for something new
-        try:
-            planner_prompt = f"""
-            Based on the user's latest query, decide whether to MERGE the new filters with the previous ones or REPLACE them.
-            - MERGE if the user is refining, clarifying, or adding to their previous request (e.g., "what about in Skudai?", "and for braces?", "which of those...").
-            - REPLACE if the user is changing the subject or starting over (e.g., "never mind", "actually, how about...", "new search:").
+    final_filters = previous_filters.copy()
+    user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
-            Previous Filters: {json.dumps(previous_filters)}
-            Latest User Query: "{latest_user_message}"
-            New Entities Found: {json.dumps(current_filters)}
+    # LOGIC FIX 2: The planner runs if new facts are found OR if the user signals a reset.
+    if current_filters or (user_wants_to_reset and previous_filters):
+        try:
+            # PROMPT FIX: More robust instructions for the planner
+            planner_prompt = f"""
+            Your job is to decide if a user wants to MERGE filters or REPLACE them.
+            
+            **Rules:**
+            - REPLACE if the user signals a topic change. Keywords like "never mind", "start over", "actually", or asking for a completely different service (e.g., previous was 'braces', new is 'whitening') mean REPLACE.
+            - MERGE if the user is refining their current search. Keywords like "what about", "in", "which of those" or adding a location to a service mean MERGE.
+
+            **Analysis:**
+            - Previous Filters: {json.dumps(previous_filters)}
+            - Latest User Query: "{latest_user_message}"
+            - New Entities Found: {json.dumps(current_filters)}
+
+            Does this query indicate a topic change (REPLACE) or a refinement (MERGE)?
             """
             planner_response = query_planner_model.generate_content(planner_prompt, tools=[QueryPlan])
             plan_tool_call = planner_response.candidates[0].content.parts[0].function_call
@@ -115,15 +121,12 @@ def handle_chat(query: UserQuery):
                 final_filters.update(current_filters)
 
         except Exception as e:
-            print(f"Query Planner Error: {e}. Defaulting to MERGE.")
-            final_filters.update(current_filters) # Safe default
+            print(f"Query Planner Error: {e}. Defaulting to REPLACE on error for safety.")
+            final_filters = current_filters # Default to the new search if planner fails
     
     print(f"Final Filters to be applied: {final_filters}")
 
-
-    # STAGE 1C: RANKING BRAIN - This remains the same, analyzing sentiment from the conversation
     ranking_priorities = []
-    # ... (Ranking brain logic is unchanged and can be copied from your previous file)
     try:
         ranking_prompt = f"""
         Analyze the user's intent from the history and latest query.
@@ -152,8 +155,6 @@ def handle_chat(query: UserQuery):
         print(f"Ranking Brain Error: {e}")
         ranking_priorities = []
 
-
-    # STAGE 2: SEMANTIC SEARCH (Unchanged)
     candidate_clinics = []
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
@@ -165,7 +166,6 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: FILTERING AND DYNAMIC RANKING (Now uses `final_filters`)
     qualified_clinics = []
     if candidate_clinics:
         for clinic in candidate_clinics:
@@ -173,7 +173,6 @@ def handle_chat(query: UserQuery):
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after Quality Gate.")
 
-        # UPGRADED: Uses the decision from the Query Planner
         if final_filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
@@ -191,7 +190,6 @@ def handle_chat(query: UserQuery):
 
     top_clinics = []
     if qualified_clinics:
-        # ... (Ranking logic is unchanged, using ranking_priorities)
         if ranking_priorities:
             print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
             ranking_keys = ranking_priorities + ['rating', 'reviews']
@@ -209,10 +207,7 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-
-    # STAGE 4: FINAL RESPONSE GENERATION (Unchanged)
     context = ""
-    # ... (context generation logic is the same)
     if top_clinics:
         clinic_data_for_prompt = []
         for clinic in top_clinics:
@@ -254,5 +249,4 @@ def handle_chat(query: UserQuery):
     
     final_response = generation_model.generate_content(augmented_prompt)
 
-    # FINAL STEP: Return the response AND the filters that were used
     return {"response": final_response.text, "applied_filters": final_filters}
