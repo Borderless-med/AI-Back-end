@@ -21,6 +21,7 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # --- AI Models ---
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+query_planner_model = genai.GenerativeModel('gemini-1.5-flash-latest') # NEW: The Query Planner AI
 embedding_model = 'models/embedding-001'
 generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
@@ -31,6 +32,8 @@ class ChatMessage(BaseModel):
 
 class UserQuery(BaseModel):
     history: List[ChatMessage]
+    # UPGRADED: To remember the last set of applied filters
+    applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
 
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
@@ -38,6 +41,17 @@ class ServiceEnum(str, Enum):
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
+
+# NEW: Pydantic models for the Query Planner's decision
+class FilterAction(str, Enum):
+    MERGE = "MERGE"
+    REPLACE = "REPLACE"
+
+class QueryPlan(BaseModel):
+    """The plan for how to handle filters based on user intent."""
+    action: FilterAction = Field(..., description="Decide whether to MERGE new filters with old ones or REPLACE them.")
+    reason: str = Field(..., description="A brief explanation for the decision (e.g., 'User is refining their search' or 'User is changing the topic').")
+
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -48,11 +62,11 @@ def read_root():
 
 @app.post("/chat")
 def handle_chat(query: UserQuery):
-    # --- Robustly Parse Incoming History ---
     if not query.history:
         return {"response": "Error: History is empty."}
     
     latest_user_message = query.history[-1].content
+    previous_filters = query.applied_filters or {}
     
     conversation_history_for_prompt = ""
     for msg in query.history[:-1]:
@@ -60,32 +74,56 @@ def handle_chat(query: UserQuery):
 
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
+    print(f"Previous Filters: {previous_filters}")
 
-    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS (FORTIFIED VERSION)
-    filters = {}
-    ranking_priorities = []
-    
-    # --- FIX 1: Isolate the Factual Brain ---
-    # The Factual Brain ONLY sees the latest user message. This prevents context contamination.
+    # STAGE 1A: FACTUAL BRAIN - Extract entities from the LATEST query
+    current_filters = {}
     try:
-        # The prompt is now clean, focused, and simple.
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
-        
-        # Improved error handling to find the function call
         function_call = factual_response.candidates[0].content.parts[0].function_call
         if function_call:
             args = function_call.args
-            # Use .get() with a default to avoid errors if a key is missing
-            if args.get('service'): filters['services'] = [args.get('service')]
-            if args.get('township'): filters['township'] = args.get('township')
-        print(f"Factual Brain extracted: {filters}")
+            if args.get('service'): current_filters['services'] = [args.get('service')]
+            if args.get('township'): current_filters['township'] = args.get('township')
+        print(f"Factual Brain extracted: {current_filters}")
     except (IndexError, AttributeError, Exception) as e:
-        print(f"Factual Brain Error: Could not find function call or other error. Details: {e}")
-        filters = {}
+        print(f"Factual Brain Error: {e}")
+        current_filters = {}
 
-    # --- FIX 2: Stabilize the Ranking Brain ---
-    # The Ranking Brain gets the history, but with a much stricter prompt and robust parsing.
+    # NEW STAGE 1B: QUERY PLANNER - Decide whether to MERGE or REPLACE filters
+    final_filters = previous_filters.copy() # Start with the old filters by default
+    if current_filters: # Only plan if the user asked for something new
+        try:
+            planner_prompt = f"""
+            Based on the user's latest query, decide whether to MERGE the new filters with the previous ones or REPLACE them.
+            - MERGE if the user is refining, clarifying, or adding to their previous request (e.g., "what about in Skudai?", "and for braces?", "which of those...").
+            - REPLACE if the user is changing the subject or starting over (e.g., "never mind", "actually, how about...", "new search:").
+
+            Previous Filters: {json.dumps(previous_filters)}
+            Latest User Query: "{latest_user_message}"
+            New Entities Found: {json.dumps(current_filters)}
+            """
+            planner_response = query_planner_model.generate_content(planner_prompt, tools=[QueryPlan])
+            plan_tool_call = planner_response.candidates[0].content.parts[0].function_call
+            plan_args = plan_tool_call.args
+            print(f"Query Planner decided: {plan_args['action']}. Reason: {plan_args['reason']}")
+
+            if plan_args['action'] == 'REPLACE':
+                final_filters = current_filters
+            else: # MERGE
+                final_filters.update(current_filters)
+
+        except Exception as e:
+            print(f"Query Planner Error: {e}. Defaulting to MERGE.")
+            final_filters.update(current_filters) # Safe default
+    
+    print(f"Final Filters to be applied: {final_filters}")
+
+
+    # STAGE 1C: RANKING BRAIN - This remains the same, analyzing sentiment from the conversation
+    ranking_priorities = []
+    # ... (Ranking brain logic is unchanged and can be copied from your previous file)
     try:
         ranking_prompt = f"""
         Analyze the user's intent from the history and latest query.
@@ -103,25 +141,19 @@ def handle_chat(query: UserQuery):
         Respond with ONLY the JSON list. Do not add any other text or markdown.
         """
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
-        
-        # Robust JSON parsing to handle potential extra text from the AI
         json_text = ranking_response.text
         start_index = json_text.find('[')
         end_index = json_text.rfind(']')
-        
         if start_index != -1 and end_index != -1:
             clean_json_text = json_text[start_index:end_index+1]
             ranking_priorities = json.loads(clean_json_text)
-            print(f"Ranking Brain determined priorities: {ranking_priorities}")
-        else:
-            print("Ranking Brain Warning: No valid JSON list found in response.")
-            ranking_priorities = []
-            
+        print(f"Ranking Brain determined priorities: {ranking_priorities}")
     except Exception as e:
-        print(f"Ranking Brain Error: {e}.")
+        print(f"Ranking Brain Error: {e}")
         ranking_priorities = []
 
-    # STAGE 2: ROBUST SEMANTIC SEARCH
+
+    # STAGE 2: SEMANTIC SEARCH (Unchanged)
     candidate_clinics = []
     try:
         query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
@@ -133,7 +165,7 @@ def handle_chat(query: UserQuery):
     except Exception as e:
         print(f"Semantic search DB function error: {e}")
 
-    # STAGE 3: FILTERING AND DYNAMIC RANKING
+    # STAGE 3: FILTERING AND DYNAMIC RANKING (Now uses `final_filters`)
     qualified_clinics = []
     if candidate_clinics:
         for clinic in candidate_clinics:
@@ -141,31 +173,32 @@ def handle_chat(query: UserQuery):
                 qualified_clinics.append(clinic)
         print(f"Found {len(qualified_clinics)} candidates after Quality Gate.")
 
-        if filters:
+        # UPGRADED: Uses the decision from the Query Planner
+        if final_filters:
             factually_filtered_clinics = []
             for clinic in qualified_clinics:
                 match = True
-                if filters.get('township') and filters.get('township').lower() not in clinic.get('address', '').lower():
+                if final_filters.get('township') and final_filters.get('township').lower() not in clinic.get('address', '').lower():
                     match = False
-                if filters.get('services'):
-                    for service in filters.get('services'):
+                if final_filters.get('services'):
+                    for service in final_filters.get('services'):
                         if not clinic.get(service, False):
                             match = False; break
                 if match:
                     factually_filtered_clinics.append(clinic)
             qualified_clinics = factually_filtered_clinics
-            print(f"Found {len(qualified_clinics)} after Factual Filters.")
+            print(f"Found {len(qualified_clinics)} after applying Factual Filters.")
 
     top_clinics = []
     if qualified_clinics:
+        # ... (Ranking logic is unchanged, using ranking_priorities)
         if ranking_priorities:
             print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
             ranking_keys = ranking_priorities + ['rating', 'reviews']
-            # Use dict.fromkeys to remove duplicate keys while preserving order
             unique_keys = list(dict.fromkeys(ranking_keys))
             ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in unique_keys), reverse=True)
         else:
-            print("Applying OBJECTIVE-FIRST weighted score for general/location query.")
+            print("Applying OBJECTIVE-FIRST weighted score.")
             max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
             for clinic in qualified_clinics:
                 norm_rating = (clinic.get('rating', 0) - 1) / 4.0
@@ -176,8 +209,10 @@ def handle_chat(query: UserQuery):
         top_clinics = ranked_clinics[:3]
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
-    # STAGE 4: FINAL RESPONSE GENERATION
+
+    # STAGE 4: FINAL RESPONSE GENERATION (Unchanged)
     context = ""
+    # ... (context generation logic is the same)
     if top_clinics:
         clinic_data_for_prompt = []
         for clinic in top_clinics:
@@ -185,7 +220,7 @@ def handle_chat(query: UserQuery):
              clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     else:
-        context = "I'm sorry, I could not find any clinics that matched your search criteria."
+        context = "I'm sorry, I could not find any clinics that matched your specific search criteria."
 
     augmented_prompt = f"""
     You are an expert dental clinic assistant. Your task is to generate a concise, data-driven response.
@@ -219,4 +254,5 @@ def handle_chat(query: UserQuery):
     
     final_response = generation_model.generate_content(augmented_prompt)
 
-    return {"response": final_response.text}
+    # FINAL STEP: Return the response AND the filters that were used
+    return {"response": final_response.text, "applied_filters": final_filters}
