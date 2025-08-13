@@ -118,7 +118,7 @@ def handle_chat(query: UserQuery):
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
-        function_call = factual_response.candidates[0].content.parts[0].function_call
+        function_call = factual_response.candidates.content.parts.function_call
         if function_call and function_call.args:
             args = function_call.args
             if args.get('service'): current_filters['services'] = [args.get('service')]
@@ -224,7 +224,7 @@ def handle_chat(query: UserQuery):
             ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         
         top_clinics = ranked_clinics[:3]
-        print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
+        print(f"Ranking complete. Top clinic: {top_clinics['name'] if top_clinics else 'N/A'}")
 
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
@@ -235,7 +235,6 @@ def handle_chat(query: UserQuery):
              clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     
-    # THE FIX IS HERE: The `{}` has been replaced with `{{}}` to escape the characters correctly.
     augmented_prompt = f"""
     You are a helpful and expert AI dental concierge. Your goal is to provide a clear, data-driven answer to the user's question.
 
@@ -265,4 +264,4 @@ def handle_chat(query: UserQuery):
     
     final_response = generation_model.generate_content(augmented_prompt)
 
-    return {"response": final_response.text, "applied_filters": final_filters}```
+    return {"response": final_response.text, "applied_filters": final_filters}
