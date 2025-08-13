@@ -52,7 +52,6 @@ class QueryPlan(BaseModel):
 # --- FastAPI App ---
 app = FastAPI()
 
-# LOGIC FIX 1: Define keywords that signal a desire to reset the search
 RESET_KEYWORDS = ["never mind", "start over", "reset", "forget that", "actually"]
 
 @app.get("/")
@@ -80,7 +79,7 @@ def handle_chat(query: UserQuery):
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
         function_call = factual_response.candidates[0].content.parts[0].function_call
-        if function_call:
+        if function_call and function_call.args:
             args = function_call.args
             if args.get('service'): current_filters['services'] = [args.get('service')]
             if args.get('township'): current_filters['township'] = args.get('township')
@@ -92,10 +91,8 @@ def handle_chat(query: UserQuery):
     final_filters = previous_filters.copy()
     user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
-    # LOGIC FIX 2: The planner runs if new facts are found OR if the user signals a reset.
     if current_filters or (user_wants_to_reset and previous_filters):
         try:
-            # PROMPT FIX: More robust instructions for the planner
             planner_prompt = f"""
             Your job is to decide if a user wants to MERGE filters or REPLACE them.
             
@@ -111,20 +108,33 @@ def handle_chat(query: UserQuery):
             Does this query indicate a topic change (REPLACE) or a refinement (MERGE)?
             """
             planner_response = query_planner_model.generate_content(planner_prompt, tools=[QueryPlan])
+            
+            # THE FIX: Add defensive checks to ensure the AI response is valid before using it.
             plan_tool_call = planner_response.candidates[0].content.parts[0].function_call
-            plan_args = plan_tool_call.args
-            print(f"Query Planner decided: {plan_args['action']}. Reason: {plan_args['reason']}")
+            
+            if plan_tool_call and plan_tool_call.args and plan_tool_call.args.get('action'):
+                plan_args = plan_tool_call.args
+                action = plan_args.get('action')
+                reason = plan_args.get('reason', 'No reason provided.')
+                print(f"Query Planner decided: {action}. Reason: {reason}")
 
-            if plan_args['action'] == 'REPLACE':
-                final_filters = current_filters
-            else: # MERGE
+                if action == 'REPLACE':
+                    final_filters = current_filters
+                else: # MERGE
+                    final_filters.update(current_filters)
+            else:
+                # SAFE DEFAULT: If the AI fails to provide a clear plan, log it and make a safe choice.
+                # If the user is adding info, the safest choice is to MERGE.
+                print("Query Planner Warning: AI did not return a valid plan. Defaulting to MERGE.")
                 final_filters.update(current_filters)
 
         except Exception as e:
-            print(f"Query Planner Error: {e}. Defaulting to REPLACE on error for safety.")
-            final_filters = current_filters # Default to the new search if planner fails
+            print(f"Query Planner Error: {e}. Defaulting to REPLACE on critical error.")
+            final_filters = current_filters
     
     print(f"Final Filters to be applied: {final_filters}")
+
+    # ... The rest of the file is unchanged ...
 
     ranking_priorities = []
     try:
