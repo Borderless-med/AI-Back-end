@@ -61,37 +61,62 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
 
-    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS
+    # STAGE 1: DUAL-STREAM BRAIN ANALYSIS (FORTIFIED VERSION)
     filters = {}
     ranking_priorities = []
     
+    # --- FIX 1: Isolate the Factual Brain ---
+    # The Factual Brain ONLY sees the latest user message. This prevents context contamination.
     try:
-        # Simplified prompt for robustness
-        prompt_text = f"History:\n{conversation_history_for_prompt}\nLatest Query: {latest_user_message}"
+        # The prompt is now clean, focused, and simple.
+        prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
+        
+        # Improved error handling to find the function call
         function_call = factual_response.candidates[0].content.parts[0].function_call
         if function_call:
             args = function_call.args
+            # Use .get() with a default to avoid errors if a key is missing
             if args.get('service'): filters['services'] = [args.get('service')]
             if args.get('township'): filters['township'] = args.get('township')
         print(f"Factual Brain extracted: {filters}")
-    except Exception as e:
-        print(f"Factual Brain Error: {e}.")
+    except (IndexError, AttributeError, Exception) as e:
+        print(f"Factual Brain Error: Could not find function call or other error. Details: {e}")
         filters = {}
 
+    # --- FIX 2: Stabilize the Ranking Brain ---
+    # The Ranking Brain gets the history, but with a much stricter prompt and robust parsing.
     try:
         ranking_prompt = f"""
-        Analyze the latest query based on the history. Priorities are 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
-        - If the query mentions a service, infer the priority (e.g., 'implants' -> 'sentiment_dentist_skill').
-        - If the query is general, return an empty list.
-        Return a JSON list of strings.
-        History: {conversation_history_for_prompt}
-        Query: "{latest_user_message}"
+        Analyze the user's intent from the history and latest query.
+        Your output MUST be a valid JSON list of strings and nothing else.
+        The list can contain 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
+        - For complex services ('implant', 'braces', 'root canal'), prioritize 'sentiment_dentist_skill'.
+        - For cosmetic services ('whitening', 'veneers'), prioritize 'sentiment_cost_value'.
+        - For location queries ('near', 'in'), prioritize 'sentiment_convenience'.
+        - If the intent is ambiguous or general, return an empty list [].
+
+        History:
+        {conversation_history_for_prompt}
+        Latest Query: "{latest_user_message}"
+
+        Respond with ONLY the JSON list. Do not add any other text or markdown.
         """
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
-        json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
-        ranking_priorities = json.loads(json_text)
-        print(f"Ranking Brain determined priorities: {ranking_priorities}")
+        
+        # Robust JSON parsing to handle potential extra text from the AI
+        json_text = ranking_response.text
+        start_index = json_text.find('[')
+        end_index = json_text.rfind(']')
+        
+        if start_index != -1 and end_index != -1:
+            clean_json_text = json_text[start_index:end_index+1]
+            ranking_priorities = json.loads(clean_json_text)
+            print(f"Ranking Brain determined priorities: {ranking_priorities}")
+        else:
+            print("Ranking Brain Warning: No valid JSON list found in response.")
+            ranking_priorities = []
+            
     except Exception as e:
         print(f"Ranking Brain Error: {e}.")
         ranking_priorities = []
@@ -134,9 +159,13 @@ def handle_chat(query: UserQuery):
     top_clinics = []
     if qualified_clinics:
         if ranking_priorities:
+            print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
             ranking_keys = ranking_priorities + ['rating', 'reviews']
-            ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in list(dict.fromkeys(ranking_keys))), reverse=True)
+            # Use dict.fromkeys to remove duplicate keys while preserving order
+            unique_keys = list(dict.fromkeys(ranking_keys))
+            ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in unique_keys), reverse=True)
         else:
+            print("Applying OBJECTIVE-FIRST weighted score for general/location query.")
             max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
             for clinic in qualified_clinics:
                 norm_rating = (clinic.get('rating', 0) - 1) / 4.0
@@ -150,7 +179,6 @@ def handle_chat(query: UserQuery):
     # STAGE 4: FINAL RESPONSE GENERATION
     context = ""
     if top_clinics:
-        # ... (context generation is the same)
         clinic_data_for_prompt = []
         for clinic in top_clinics:
              clinic_info = { "name": clinic.get('name'), "address": clinic.get('address'), "rating": clinic.get('rating'), "reviews": clinic.get('reviews'), "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),}
