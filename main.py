@@ -75,18 +75,46 @@ def handle_chat(query: UserQuery):
     print(f"Previous Filters: {previous_filters}")
     print(f"Incoming Candidate Pool Size: {len(candidate_clinics)}")
 
-    # STAGE 1A: Factual Brain
+    # STAGE 1A: Factual Brain (with "Two-Prompt" Safety Net)
     current_filters = {}
     try:
+        # --- Attempt 1: The "Smart" Tool-Based Prompt ---
+        print("Factual Brain: Attempting Tool Call...")
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
+        
         if factual_response.candidates and factual_response.candidates[0].content.parts:
             function_call = factual_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 args = function_call.args
                 if args.get('service'): current_filters['services'] = [args.get('service')]
                 if args.get('township'): current_filters['township'] = args.get('township')
+        
+        # --- Attempt 2: The "Dumb" Safety Net Prompt ---
+        if not current_filters:
+            print("Factual Brain: Tool Call failed. Attempting Safety Net Prompt...")
+            service_list_str = ", ".join([f"'{e.value}'" for e in ServiceEnum])
+            
+            safety_net_prompt = f"""
+            Analyze the user's query and extract information into a JSON object.
+            User Query: "{latest_user_message}"
+
+            1.  **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.
+            2.  **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.
+
+            Your response MUST be a single, valid JSON object and nothing else.
+            Example: {{"service": "dental_implant", "township": "johor bahru"}}
+            """
+            
+            safety_net_response = factual_brain_model.generate_content(safety_net_prompt)
+            json_text = safety_net_response.text.strip().replace("```json", "").replace("```", "")
+            extracted_data = json.loads(json_text)
+            
+            if extracted_data.get('service'): current_filters['services'] = [extracted_data.get('service')]
+            if extracted_data.get('township'): current_filters['township'] = extracted_data.get('township')
+
         print(f"Factual Brain extracted: {current_filters}")
+
     except (IndexError, AttributeError, Exception) as e:
         print(f"Factual Brain Error: {e}")
         current_filters = {}
@@ -98,7 +126,7 @@ def handle_chat(query: UserQuery):
     if user_wants_to_reset:
         print("Deterministic Planner decided: REPLACE (reset keyword found).")
         final_filters = current_filters
-        candidate_clinics = [] # CRITICAL: Resetting also clears the candidate pool
+        candidate_clinics = []
     else:
         print("Deterministic Planner decided: MERGE (default action).")
         final_filters = previous_filters.copy()
