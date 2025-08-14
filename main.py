@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Any
 import json
 import numpy as np
 from numpy.linalg import norm
@@ -32,6 +32,7 @@ class ChatMessage(BaseModel):
 class UserQuery(BaseModel):
     history: List[ChatMessage]
     applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
+    candidate_pool: Optional[List[dict]] = Field(None, description="The full list of candidates from the initial semantic search.")
 
 class ServiceEnum(str, Enum):
     tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
@@ -43,7 +44,6 @@ class UserIntent(BaseModel):
 # --- FastAPI App ---
 app = FastAPI()
 
-# Final, curated list of reset keywords
 RESET_KEYWORDS = [
     "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
     "clear filters", "let's try that again", "take two", "start from the top", "do-over",
@@ -64,6 +64,7 @@ def handle_chat(query: UserQuery):
     
     latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
+    candidate_clinics = query.candidate_pool or []
     
     conversation_history_for_prompt = ""
     for msg in query.history[:-1]:
@@ -72,14 +73,13 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Previous Filters: {previous_filters}")
+    print(f"Incoming Candidate Pool Size: {len(candidate_clinics)}")
 
     # STAGE 1A: Factual Brain
     current_filters = {}
     try:
         prompt_text = f"Extract entities from this query: '{latest_user_message}'"
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
-        
-        # THE FIX 1: More robust parsing to handle API response structure changes.
         if factual_response.candidates and factual_response.candidates[0].content.parts:
             function_call = factual_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
@@ -98,6 +98,7 @@ def handle_chat(query: UserQuery):
     if user_wants_to_reset:
         print("Deterministic Planner decided: REPLACE (reset keyword found).")
         final_filters = current_filters
+        candidate_clinics = [] # CRITICAL: Resetting also clears the candidate pool
     else:
         print("Deterministic Planner decided: MERGE (default action).")
         final_filters = previous_filters.copy()
@@ -132,29 +133,34 @@ def handle_chat(query: UserQuery):
         print(f"Ranking Brain Error: {e}")
         ranking_priorities = []
 
-    # STAGE 2: Semantic Search
-    candidate_clinics = []
-    try:
-        query_embedding_response = genai.embed_content(model=embedding_model, content=latest_user_message, task_type="RETRIEVAL_QUERY")
-        query_embedding_list = query_embedding_response['embedding']
-        query_embedding_text = "[" + ",".join(map(str, query_embedding_list)) + "]"
-        db_response = supabase.rpc('match_clinics_simple', {'query_embedding_text': query_embedding_text, 'match_count': 75}).execute()
-        candidate_clinics = db_response.data if db_response.data else []
-        print(f"Found {len(candidate_clinics)} candidates from semantic search.")
-    except Exception as e:
-        print(f"Semantic search DB function error: {e}")
+    # STAGE 2: CONDITIONAL SEMANTIC SEARCH
+    if not candidate_clinics:
+        print("Candidate pool is empty. Performing initial database search.")
+        try:
+            search_text = latest_user_message if not final_filters else json.dumps(final_filters)
+            query_embedding_response = genai.embed_content(model=embedding_model, content=search_text, task_type="RETRIEVAL_QUERY")
+            query_embedding_list = query_embedding_response['embedding']
+            query_embedding_text = "[" + ",".join(map(str, query_embedding_list)) + "]"
+            db_response = supabase.rpc('match_clinics_simple', {'query_embedding_text': query_embedding_text, 'match_count': 75}).execute()
+            candidate_clinics = db_response.data if db_response.data else []
+            print(f"Found {len(candidate_clinics)} initial candidates from semantic search.")
+        except Exception as e:
+            print(f"Semantic search DB function error: {e}")
+    else:
+        print(f"Using existing candidate pool of {len(candidate_clinics)} clinics.")
 
-    # STAGE 3: Filtering and Ranking
+    # STAGE 3: IN-MEMORY FILTERING and Ranking
     qualified_clinics = []
     if candidate_clinics:
+        quality_gated_clinics = []
         for clinic in candidate_clinics:
             if clinic.get('rating', 0) >= 4.5 and clinic.get('reviews', 0) >= 30:
-                qualified_clinics.append(clinic)
-        print(f"Found {len(qualified_clinics)} candidates after Quality Gate.")
+                quality_gated_clinics.append(clinic)
+        print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
 
         if final_filters:
             factually_filtered_clinics = []
-            for clinic in qualified_clinics:
+            for clinic in quality_gated_clinics:
                 match = True
                 if final_filters.get('township') and final_filters.get('township').lower() not in clinic.get('address', '').lower():
                     match = False
@@ -165,7 +171,9 @@ def handle_chat(query: UserQuery):
                 if match:
                     factually_filtered_clinics.append(clinic)
             qualified_clinics = factually_filtered_clinics
-            print(f"Found {len(qualified_clinics)} after applying Factual Filters.")
+            print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
+        else:
+            qualified_clinics = quality_gated_clinics
 
     top_clinics = []
     if qualified_clinics:
@@ -184,8 +192,6 @@ def handle_chat(query: UserQuery):
             ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         
         top_clinics = ranked_clinics[:3]
-        
-        # THE FIX 2: Correctly access the *first item* of the list before getting its name.
         print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
     # STAGE 4: FINAL RESPONSE GENERATION
@@ -218,4 +224,8 @@ def handle_chat(query: UserQuery):
     
     final_response = generation_model.generate_content(augmented_prompt)
 
-    return {"response": final_response.text, "applied_filters": final_filters}
+    return {
+        "response": final_response.text, 
+        "applied_filters": final_filters,
+        "candidate_pool": candidate_clinics
+    }
