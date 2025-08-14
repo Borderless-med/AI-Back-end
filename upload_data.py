@@ -10,60 +10,62 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- CRITICAL: SET THE PATH TO YOUR FINAL CSV FILE ---
-# You MUST replace the placeholder below with the actual, full path to your CSV file.
-# This is the "complete" CSV you downloaded from Google Sheets with all the sentiment scores.
-CSV_FILE_PATH = "C:\GSP Personal\Post EndoMaster\Antler's Stuff\JB Dental clinics\clinics_data_rows with sentiment analysis.csv"
+# You MUST replace the placeholder below with the actual, full path to the
+# CSV file you just downloaded from your master Google Sheet.
+# The 'r' before the string is essential for Windows paths.
+CSV_FILE_PATH = r"C:\GSP Personal\Post EndoMaster\Antler's Stuff\JB Dental clinics\SG-JB DENTAL - MASTER DATA & ANALYSIS - clinics_data_rows.csv"
 
-def upload_data_from_csv():
-    print(f"Reading data from: {CSV_FILE_PATH}")
+def upload_final_data():
+    print("--- Starting Final Data Upload Process ---")
 
+    # Step 1: Clear the existing table to ensure a clean slate
+    try:
+        print("Step 1/3: Clearing existing data from 'clinics_data' table...")
+        supabase.table("clinics_data").delete().neq("id", -1).execute()
+        print("  -> Existing data cleared successfully.")
+    except Exception as e:
+        print(f"  -> ERROR clearing table: {e}")
+        return
+
+    # Step 2: Read the new, complete data from the CSV
+    print(f"Step 2/3: Reading new data from: {CSV_FILE_PATH}")
     try:
         with open(CSV_FILE_PATH, mode='r', encoding='utf-8') as file:
             csv_reader = csv.DictReader(file)
             all_rows_from_csv = list(csv_reader)
             total_rows = len(all_rows_from_csv)
-            print(f"Found {total_rows} rows to upload.")
-
-            # We will upload the data in batches to be safe and efficient
-            batch_size = 25
-            for i in range(0, total_rows, batch_size):
-                batch = all_rows_from_csv[i:i + batch_size]
-                print(f"Preparing and uploading batch {int(i/batch_size) + 1}...")
-
-                # This is the crucial step to prepare the data for Supabase
-                prepared_batch = []
-                for row in batch:
-                    # Create a new dictionary to hold only the data we want to insert
-                    prepared_row = {}
-                    # Loop through all the keys from the CSV row
-                    for key, value in row.items():
-                        # We explicitly EXCLUDE the columns that the database auto-generates
-                        if key not in ['embedding', 'embedding_arr']:
-                            # If the value is an empty string, convert it to None (which becomes NULL)
-                            prepared_row[key] = value if value != '' else None
-                    
-                    prepared_batch.append(prepared_row)
-
-                # Use the library's insert command with our prepared data
-                response = supabase.table("clinics_data").insert(prepared_batch).execute()
-                
-                # Check for errors in the response
-                if response.data:
-                    print(f"  -> Batch successfully uploaded.")
-                else:
-                    print(f"  -> ERROR uploading batch. Check response details.")
-                    # If you need to debug, you can print the full response:
-                    # print(response)
-
-            print("\n--- Data upload complete! ---")
-
+            print(f"  -> Found {total_rows} rows to upload.")
     except FileNotFoundError:
-        print(f"\nFATAL ERROR: The file was not found at the specified path.")
-        print("Please make sure the CSV_FILE_PATH in the script is 100% correct.")
-        print("Hint: In your file explorer, right-click the file and choose 'Copy as path'.")
+        print(f"\n  -> FATAL ERROR: File not found at the specified path.")
+        print("     Please make sure the CSV_FILE_PATH in the script is 100% correct.")
+        return
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
+        print(f"\n  -> ERROR reading CSV file: {e}")
+        return
 
-# --- Run the function ---
+    # Step 3: Upload the new data in batches
+    print("Step 3/3: Uploading new data to Supabase in batches...")
+    batch_size = 25
+    for i in range(0, total_rows, batch_size):
+        batch = all_rows_from_csv[i:i + batch_size]
+        print(f"  - Uploading batch {int(i/batch_size) + 1} of {int(total_rows/batch_size) + 1}...")
+
+        prepared_batch = []
+        for row in batch:
+            prepared_row = {}
+            for key, value in row.items():
+                if key not in ['embedding', 'embedding_arr']:
+                    prepared_row[key] = value if value else None
+            prepared_batch.append(prepared_row)
+        
+        try:
+            supabase.table("clinics_data").upsert(prepared_batch).execute()
+            print(f"    -> Batch successfully uploaded.")
+        except Exception as e:
+            print(f"    -> FATAL ERROR during batch upload: {e}")
+            break
+
+    print("\n--- Final Data Upload Process Complete! ---")
+
 if __name__ == "__main__":
-    upload_data_from_csv()
+    upload_final_data()
