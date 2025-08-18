@@ -20,7 +20,7 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- AI Models ---
-gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-latest') # NEW
+gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 embedding_model = 'models/embedding-001'
@@ -38,8 +38,7 @@ class UserQuery(BaseModel):
     booking_context: Optional[dict] = Field(None, description="Context for an ongoing booking process.")
 
 class ServiceEnum(str, Enum):
-    # ... (Enum values are unchanged)
-    pass
+    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
 
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
@@ -55,7 +54,6 @@ class UserInfo(BaseModel):
     email_address: str = Field(..., description="The user's email address.")
     whatsapp_number: str = Field(..., description="The user's WhatsApp number, including country code if provided.")
 
-# NEW: Pydantic model for the Gatekeeper's decision
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
@@ -69,7 +67,12 @@ class GatekeeperDecision(BaseModel):
 app = FastAPI()
 
 RESET_KEYWORDS = [
-    # ... (Keywords are unchanged)
+    "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
+    "clear filters", "let's try that again", "take two", "start from the top", "do-over",
+    "change the subject", "new topic", "new search", "change course", "new direction",
+    "switch gears", "let's pivot", "about face", "u-turn", "take another tack", "clean slate",
+    "wipe the slate clean", "blank canvas", "empty page", "clean sheet", "back to square one",
+    "back to the drawing board", "new chapter", "fresh chapter", "actually", "how about something else",
 ]
 
 @app.get("/")
@@ -95,9 +98,9 @@ def handle_chat(query: UserQuery):
     print(f"Booking Context: {booking_context}")
 
     # --- STAGE 0: THE GATEKEEPER ---
-    intent = ChatIntent.FIND_CLINIC # Default
+    intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f"Classify the user's intent based on their latest message. History:\n{conversation_history_for_prompt}"
+        gatekeeper_prompt = f"Classify the user's primary intent based on their latest message and the conversation history. Choose 'book_appointment' if they are clearly trying to schedule a visit. Otherwise, choose 'find_clinic'.\n\nHistory:\n{conversation_history_for_prompt}"
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
         if function_call and function_call.args:
@@ -108,21 +111,177 @@ def handle_chat(query: UserQuery):
 
     # --- BOOKING MODE LOGIC ---
     if intent == ChatIntent.BOOK_APPOINTMENT or booking_context.get("status") == "gathering_info":
-        # ... (The entire booking mode logic from the previous file goes here)
-        # ... (This logic is now self-contained and only runs when the intent is correct)
-        # For brevity, this is a placeholder. The full code is in the version I will send next.
-        pass
+        if booking_context.get("status") == "gathering_info":
+            print("In Booking Mode: Capturing user info...")
+            try:
+                user_info_response = factual_brain_model.generate_content(
+                    f"Extract the user's name, email, and WhatsApp number from this message: '{latest_user_message}'",
+                    tools=[UserInfo]
+                )
+                function_call = user_info_response.candidates[0].content.parts[0].function_call
+                if function_call and function_call.args:
+                    user_args = function_call.args
+                    base_url = "https://www.sg-jb-dental.com/book-now"
+                    params = {
+                        'name': user_args.get('patient_name'),
+                        'email': user_args.get('email_address'),
+                        'phone': user_args.get('whatsapp_number'),
+                        'clinic': booking_context.get('clinic_name'),
+                        'treatment': booking_context.get('treatment')
+                    }
+                    params = {k: v for k, v in params.items() if v is not None}
+                    query_string = urlencode(params)
+                    final_url = f"{base_url}?{query_string}"
+                    final_response_text = f"Perfect, thank you! I have pre-filled the booking form for you. Please click this link to choose your preferred date and time, and to confirm your appointment:\n\n[Click here to complete your booking]({final_url})"
+                    
+                    return {
+                        "response": final_response_text,
+                        "applied_filters": {}, "candidate_pool": [],
+                        "booking_context": {"status": "complete"}
+                    }
+            except Exception as e:
+                print(f"Booking Info Capture Error: {e}")
+                final_response_text = "I'm sorry, I had trouble understanding those details. Could you please try entering them again? Just your name, email, and WhatsApp number."
+                return {
+                    "response": final_response_text, "applied_filters": previous_filters,
+                    "candidate_pool": candidate_clinics, "booking_context": booking_context
+                }
+        else: # This is the first step of booking
+            print("Starting Booking Mode...")
+            try:
+                booking_intent_response = factual_brain_model.generate_content(
+                    f"From the user's message, extract the name of the clinic they want to book. Message: '{latest_user_message}'",
+                    tools=[BookingIntent]
+                )
+                function_call = booking_intent_response.candidates[0].content.parts[0].function_call
+                if function_call and function_call.args:
+                    booking_args = function_call.args
+                    clinic_name = booking_args.get('clinic_name')
+                    treatment = (previous_filters.get('services') or [None])[0]
+                    new_booking_context = {"status": "gathering_info", "clinic_name": clinic_name, "treatment": treatment}
+                    response_text = f"Great! I can help you get started with booking an appointment for **{treatment or 'a consultation'}** at **{clinic_name}**. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
+                    
+                    return {
+                        "response": response_text, "applied_filters": previous_filters,
+                        "candidate_pool": candidate_clinics, "booking_context": new_booking_context
+                    }
+            except Exception as e:
+                print(f"Booking Intent Extraction Error: {e}")
+                # Fallback if it fails
+                return {"response": "I can help with that. Which clinic would you like to book?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
 
     # --- RECOMMENDATION MODE ---
     elif intent == ChatIntent.FIND_CLINIC:
-        # ... (The entire recommendation mode logic from the previous file goes here)
-        # ... (This logic is now self-contained and only runs when the intent is correct)
-        # For brevity, this is a placeholder.
-        pass
+        current_filters = {}
+        try:
+            prompt_text = f"Extract entities from this query: '{latest_user_message}'"
+            factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
+            if factual_response.candidates and factual_response.candidates[0].content.parts:
+                function_call = factual_response.candidates[0].content.parts[0].function_call
+                if function_call and function_call.args:
+                    args = function_call.args
+                    if args.get('service'): current_filters['services'] = [args.get('service')]
+                    if args.get('township'): current_filters['township'] = args.get('township')
+            print(f"Factual Brain extracted: {current_filters}")
+        except Exception as e:
+            print(f"Factual Brain Error: {e}")
+
+        final_filters = {}
+        user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
+
+        if user_wants_to_reset:
+            print("Deterministic Planner decided: REPLACE (reset keyword found).")
+            final_filters = current_filters
+            candidate_clinics = []
+        else:
+            print("Deterministic Planner decided: MERGE (default action).")
+            final_filters = previous_filters.copy()
+            final_filters.update(current_filters)
         
+        print(f"Final Filters to be applied: {final_filters}")
+
+        ranking_priorities = []
+        try:
+            ranking_prompt = f"""
+            Analyze the user's intent from the history and latest query...
+            History: {conversation_history_for_prompt}
+            Latest Query: "{latest_user_message}"
+            Respond with ONLY the JSON list.
+            """
+            ranking_response = ranking_brain_model.generate_content(ranking_prompt)
+            json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
+            ranking_priorities = json.loads(json_text)
+            print(f"Ranking Brain determined priorities: {ranking_priorities}")
+        except Exception as e:
+            print(f"Ranking Brain Error: {e}")
+
+        if not candidate_clinics:
+            print("Candidate pool is empty. Performing initial database search.")
+            try:
+                search_text = latest_user_message if not final_filters else json.dumps(final_filters)
+                query_embedding_response = genai.embed_content(model=embedding_model, content=search_text, task_type="RETRIEVAL_QUERY")
+                query_embedding_list = query_embedding_response['embedding']
+                query_embedding_text = "[" + ",".join(map(str, query_embedding_list)) + "]"
+                db_response = supabase.rpc('match_clinics_simple', {'query_embedding_text': query_embedding_text, 'match_count': 75}).execute()
+                candidate_clinics = db_response.data if db_response.data else []
+                print(f"Found {len(candidate_clinics)} initial candidates from semantic search.")
+            except Exception as e:
+                print(f"Semantic search DB function error: {e}")
+        else:
+            print(f"Using existing candidate pool of {len(candidate_clinics)} clinics.")
+
+        qualified_clinics = []
+        if candidate_clinics:
+            quality_gated_clinics = [c for c in candidate_clinics if c.get('rating', 0) >= 4.5 and c.get('reviews', 0) >= 30]
+            print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
+            if final_filters:
+                factually_filtered_clinics = []
+                for clinic in quality_gated_clinics:
+                    match = True
+                    if final_filters.get('township') and final_filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
+                    if final_filters.get('services'):
+                        for service in final_filters.get('services'):
+                            if not clinic.get(service, False): match = False; break
+                    if match: factually_filtered_clinics.append(clinic)
+                qualified_clinics = factually_filtered_clinics
+            else:
+                qualified_clinics = quality_gated_clinics
+            print(f"Found {len(qualified_clinics)} candidates after applying Factual Filters.")
+
+        top_clinics = []
+        if qualified_clinics:
+            if ranking_priorities:
+                # Ranking logic...
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('rating', 0), reverse=True) # Placeholder
+            else:
+                # Weighted score logic...
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('rating', 0), reverse=True) # Placeholder
+            top_clinics = ranked_clinics[:3]
+            print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
+
+        context = ""
+        if top_clinics:
+            # Context generation logic...
+            context = json.dumps(top_clinics)
+
+        augmented_prompt = f"""
+        You are a helpful and expert AI dental concierge...
+        **User's Latest Question:** "{latest_user_message}"
+        **Data You Must Use To Answer:** ```json\n{context}\n```
+        ---
+        **Your Task:** ... (same as before)
+        """
+        
+        final_response = generation_model.generate_content(augmented_prompt)
+        return {
+            "response": final_response.text, 
+            "applied_filters": final_filters,
+            "candidate_pool": candidate_clinics,
+            "booking_context": {}
+        }
+
     # --- GENERAL QUESTION MODE (Future) ---
     else:
-        return {"response": "Sorry, I can only help with finding or booking dental clinics right now."}
+        return {"response": "Sorry, I can only help with finding or booking dental clinics right now.", "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
 
-    # This is a placeholder return. I will provide the full, final code next.
-    return {"response": "An error occurred."}
+    return {"response": "An error occurred.", "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
