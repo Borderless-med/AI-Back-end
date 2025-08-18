@@ -122,11 +122,15 @@ def handle_chat(query: UserQuery):
                 if function_call and function_call.args:
                     user_args = function_call.args
                     base_url = "https://www.sg-jb-dental.com/book-now"
+                    
+                    # THE FINAL FIX: URL-encode the clinic name to handle special characters
+                    clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
+                    
                     params = {
                         'name': user_args.get('patient_name'),
                         'email': user_args.get('email_address'),
                         'phone': user_args.get('whatsapp_number'),
-                        'clinic': booking_context.get('clinic_name'),
+                        'clinic': clinic_name_safe, # Use the new, safe version
                         'treatment': booking_context.get('treatment')
                     }
                     params = {k: v for k, v in params.items() if v is not None}
@@ -167,7 +171,6 @@ def handle_chat(query: UserQuery):
                     }
             except Exception as e:
                 print(f"Booking Intent Extraction Error: {e}")
-                # Fallback if it fails
                 return {"response": "I can help with that. Which clinic would you like to book?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
 
     # --- RECOMMENDATION MODE ---
@@ -203,10 +206,15 @@ def handle_chat(query: UserQuery):
         ranking_priorities = []
         try:
             ranking_prompt = f"""
-            Analyze the user's intent from the history and latest query...
+            Analyze the user's intent from the history and latest query. Your output MUST be a valid JSON list of strings and nothing else.
+            The list can contain 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
+            - For complex services ('implant', 'braces', 'root canal'), prioritize 'sentiment_dentist_skill'.
+            - For cosmetic services ('whitening', 'veneers'), prioritize 'sentiment_cost_value'.
+            - For location queries ('near', 'in'), prioritize 'sentiment_convenience'.
+            - If the intent is ambiguous or general, return an empty list [].
             History: {conversation_history_for_prompt}
             Latest Query: "{latest_user_message}"
-            Respond with ONLY the JSON list.
+            Respond with ONLY the JSON list. Do not add any other text or markdown.
             """
             ranking_response = ranking_brain_model.generate_content(ranking_prompt)
             json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
@@ -251,25 +259,47 @@ def handle_chat(query: UserQuery):
         top_clinics = []
         if qualified_clinics:
             if ranking_priorities:
-                # Ranking logic...
-                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('rating', 0), reverse=True) # Placeholder
+                print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
+                ranking_keys = ranking_priorities + ['rating', 'reviews']
+                unique_keys = list(dict.fromkeys(ranking_keys))
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in unique_keys), reverse=True)
             else:
-                # Weighted score logic...
-                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('rating', 0), reverse=True) # Placeholder
+                print("Applying OBJECTIVE-FIRST weighted score.")
+                max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
+                for clinic in qualified_clinics:
+                    norm_rating = (clinic.get('rating', 0) - 1) / 4.0
+                    norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
+                    clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
+            
             top_clinics = ranked_clinics[:3]
             print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
         context = ""
         if top_clinics:
-            # Context generation logic...
-            context = json.dumps(top_clinics)
-
+            clinic_data_for_prompt = []
+            for clinic in top_clinics:
+                clinic_info = { "name": clinic.get('name'), "address": clinic.get('address'), "rating": clinic.get('rating'), "reviews": clinic.get('reviews'), "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours'),}
+                clinic_data_for_prompt.append(clinic_info)
+            context = json.dumps(clinic_data_for_prompt, indent=2)
+        
         augmented_prompt = f"""
-        You are a helpful and expert AI dental concierge...
-        **User's Latest Question:** "{latest_user_message}"
-        **Data You Must Use To Answer:** ```json\n{context}\n```
+        You are a helpful and expert AI dental concierge. Your goal is to provide a clear, data-driven answer to the user's question.
+        **Conversation History (for context):**
+        {conversation_history_for_prompt}
+        **User's Latest Question:**
+        "{latest_user_message}"
+        **Data You Must Use To Answer:**
+        ```json
+        {context}
+        ```
         ---
-        **Your Task:** ... (same as before)
+        **Your Task:**
+        1.  **Answer the User's Question:** Directly address their latest query using the data provided.
+        2.  **Present the Data Clearly:** Format your response with clinic names, ratings, and addresses as bullet points.
+        3.  **Be Honest About Limitations:** If the user asks for something you can't objectively prove from the data (like "best", "affordable", or "cheapest"), you MUST include a brief, friendly note explaining this. For example: "Please note: while I can find highly-rated clinics, 'best' is subjective and I recommend checking recent reviews." or "I've ranked these based on positive sentiment about value, but I don't have access to real-time pricing to guarantee affordability."
+        4.  **Handle "No Results":** If the DATABASE SEARCH RESULTS are empty (`{{}}`), you MUST inform the user clearly and politely that you could not find any clinics that matched their specific criteria.
+        ---
         """
         
         final_response = generation_model.generate_content(augmented_prompt)
