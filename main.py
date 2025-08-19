@@ -64,7 +64,7 @@ class GatekeeperDecision(BaseModel):
     intent: ChatIntent
 
 # --- FastAPI App ---
-app = FastAPI() # THIS IS THE CRITICAL LINE THAT WAS MISSING
+app = FastAPI()
 
 RESET_KEYWORDS = [
     "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
@@ -100,7 +100,7 @@ def handle_chat(query: UserQuery):
     # STAGE 0: THE GATEKEEPER
     intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f"Classify the user's primary intent based on their latest message and the conversation history. Choose 'book_appointment' if they are clearly trying to schedule a visit. Otherwise, choose 'find_clinic'.\n\nHistory:\n{conversation_history_for_prompt}"
+        gatekeeper_prompt = f"Classify the user's primary intent based on their latest message. History:\n{conversation_history_for_prompt}"
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
         if function_call and function_call.args:
@@ -121,7 +121,7 @@ def handle_chat(query: UserQuery):
                 function_call = user_info_response.candidates[0].content.parts[0].function_call
                 if function_call and function_call.args:
                     user_args = function_call.args
-                    base_url = "https://lovable.dev/projects/20b0e962-1b25-40eb-b514-5b283d2a150d"
+                    base_url = "https://www.sg-jb-dental.com/book-now" # Replace with your final URL
                     clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
                     params = {
                         'name': user_args.get('patient_name'), 'email': user_args.get('email_address'),
@@ -158,6 +158,7 @@ def handle_chat(query: UserQuery):
     elif intent == ChatIntent.FIND_CLINIC:
         current_filters = {}
         try:
+            print("Factual Brain: Attempting Tool Call...")
             prompt_text = f"Extract entities from this query: '{latest_user_message}'"
             factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
             if factual_response.candidates and factual_response.candidates[0].content.parts:
@@ -166,6 +167,22 @@ def handle_chat(query: UserQuery):
                     args = function_call.args
                     if args.get('service'): current_filters['services'] = [args.get('service')]
                     if args.get('township'): current_filters['township'] = args.get('township')
+            if not current_filters:
+                print("Factual Brain: Tool Call failed. Attempting Safety Net Prompt...")
+                service_list_str = ", ".join([f"'{e.value}'" for e in ServiceEnum])
+                safety_net_prompt = f"""
+                Analyze the user's query and extract information into a JSON object.
+                User Query: "{latest_user_message}"
+                1.  **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.
+                2.  **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.
+                Your response MUST be a single, valid JSON object and nothing else.
+                Example: {{"service": "dental_implant", "township": "johor bahru"}}
+                """
+                safety_net_response = factual_brain_model.generate_content(safety_net_prompt)
+                json_text = safety_net_response.text.strip().replace("```json", "").replace("```", "")
+                extracted_data = json.loads(json_text)
+                if extracted_data.get('service'): current_filters['services'] = [extracted_data.get('service')]
+                if extracted_data.get('township'): current_filters['township'] = extracted_data.get('township')
             print(f"Factual Brain extracted: {current_filters}")
         except Exception as e:
             print(f"Factual Brain Error: {e}")
@@ -186,8 +203,21 @@ def handle_chat(query: UserQuery):
 
         ranking_priorities = []
         try:
-            # Ranking Brain logic...
-            pass
+            ranking_prompt = f"""
+            Analyze the user's latest query to determine their ranking priorities. Your response MUST be a valid JSON list of strings.
+            The list can contain 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
+            - If query mentions 'convenience', 'location', 'near', include "sentiment_convenience".
+            - If query mentions 'quality', 'skill', 'best', 'top-rated', or a complex service, include "sentiment_dentist_skill".
+            - If query mentions 'cost', 'value', 'affordable', 'cheap', include "sentiment_cost_value".
+            - If multiple are mentioned, return them in order of importance. If ambiguous, return an empty list [].
+            User Query: "{latest_user_message}"
+            Respond with ONLY the JSON list.
+            """
+            ranking_response = ranking_brain_model.generate_content(ranking_prompt)
+            print(f"Ranking Brain raw response: {ranking_response.text}")
+            json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
+            ranking_priorities = json.loads(json_text)
+            print(f"Ranking Brain determined priorities: {ranking_priorities}")
         except Exception as e:
             print(f"Ranking Brain Error: {e}")
 
@@ -226,25 +256,51 @@ def handle_chat(query: UserQuery):
 
         top_clinics = []
         if qualified_clinics:
-            # Ranking logic...
-            top_clinics = qualified_clinics[:3]
+            if ranking_priorities:
+                print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
+                ranking_keys = ranking_priorities + ['rating', 'reviews']
+                unique_keys = list(dict.fromkeys(ranking_keys))
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in unique_keys), reverse=True)
+            else:
+                print("Applying OBJECTIVE-FIRST weighted score.")
+                max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
+                for clinic in qualified_clinics:
+                    norm_rating = (clinic.get('rating', 0) - 1) / 4.0
+                    norm_reviews = np.log1p(clinic.get('reviews', 0)) / np.log1p(max_reviews)
+                    clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
+                ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
+            top_clinics = ranked_clinics[:3]
             print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
         context = ""
         if top_clinics:
-            # Context generation logic...
-            context = json.dumps(top_clinics)
-
+            clinic_data_for_prompt = []
+            for i, clinic in enumerate(top_clinics):
+                clinic_info = {"position": i + 1, "name": clinic.get('name'), "address": clinic.get('address'), "rating": clinic.get('rating'), "reviews": clinic.get('reviews'), "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours')}
+                clinic_data_for_prompt.append(clinic_info)
+            context = json.dumps(clinic_data_for_prompt, indent=2)
+        
         augmented_prompt = f"""
-        You are a helpful and expert AI dental concierge...
-        **User's Latest Question:** "{latest_user_message}"
-        **Data You Must Use To Answer:** ```json\n{context}\n```
+        You are a Data Formatter. Your only job is to present the user with a list of dental clinics based on the pre-ranked JSON data provided below. You MUST NOT change the order of the clinics.
+        **Data (Pre-ranked list of clinics):**
+        ```json
+        {context}
+        ```
         ---
-        **Your Task:** ... (same as before)
+        **Your Formatting Task:**
+        1.  **Analyze User's Query:** Review the user's original query: "{latest_user_message}".
+        2.  **Present Clinics in Order:** Display the clinics from the JSON data in the exact order provided. Use "Top Recommendation" for position 1 and "Alternative Option(s)" for others. Format details as bullet points.
+        3.  **Add Concluding Note:** After the list, add a "Please note:" section. If the user's query contained subjective words (like "best" or "affordable"), your note must be honest about this limitation. Example: "Please note: While I've ranked these clinics based on their high ratings, 'best' is subjective and I recommend checking recent reviews."
+        ---
         """
         final_response = generation_model.generate_content(augmented_prompt)
         
-        return {"response": final_response.text, "applied_filters": final_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
+        return {
+            "response": final_response.text, 
+            "applied_filters": final_filters,
+            "candidate_pool": candidate_clinics,
+            "booking_context": {}
+        }
 
-    else: # Should not happen with a binary choice
+    else:
         return {"response": "An error occurred in routing.", "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
