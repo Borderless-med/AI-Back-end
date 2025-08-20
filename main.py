@@ -53,20 +53,10 @@ class UserInfo(BaseModel):
     email_address: str = Field(..., description="The user's email address.")
     whatsapp_number: str = Field(..., description="The user's WhatsApp number, including country code if provided.")
     
-class Confirmation(BaseModel):
-    is_confirmed: bool = Field(..., description="True if the user confirms ('yes', 'correct'), false if they deny or want to change something.")
-    corrected_treatment: Optional[str] = Field(None, description="If the user wants a different treatment, extract the new treatment name (e.g., 'general cleaning', 'scaling').")
-
-class TravelIntent(BaseModel):
-    clinic_name: Optional[str] = Field(None, description="The destination clinic name, if the user specifies one.")
-
-class UserLocation(BaseModel):
-    start_location: str = Field(..., description="The user's starting location, such as a postal code, neighborhood, or landmark in Singapore.")
 
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
-    TRAVEL_ADVISORY = "travel_advisory"
     GENERAL_QUESTION = "general_question"
 
 class GatekeeperDecision(BaseModel):
@@ -112,15 +102,9 @@ def handle_chat(query: UserQuery):
     intent = ChatIntent.FIND_CLINIC
     try:
         gatekeeper_prompt = f"""
-Your task is to classify the user's intent. First, check the current travel_context and booking_context. If a travel or booking conversation is already in progress, maintain that intent. Otherwise, analyze the user's latest query.
+Classify the user's primary intent. Choose 'book_appointment' if the query is about scheduling or making an appointment. Otherwise, choose 'find_clinic'.
 
-- Choose 'travel_advisory' if the query is about travel, distance, directions, traffic, or "how long" it takes.
-- Choose 'book_appointment' if the query is about scheduling, making an appointment, or availability.
-- Otherwise, choose 'find_clinic'.
-
-**Current Travel Context:** {json.dumps(travel_context)}
-**Current Booking Context:** {json.dumps(booking_context)}
-**Latest Query:** "{latest_user_message}"
+Latest Query: "{latest_user_message}"
 """ 
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
@@ -130,54 +114,7 @@ Your task is to classify the user's intent. First, check the current travel_cont
     except Exception as e:
         print(f"Gatekeeper Error: {e}. Defaulting to find_clinic.")
 
-    # --- TRAVEL ADVISOR MODE ---
-    if intent == ChatIntent.TRAVEL_ADVISORY or travel_context.get("status") == "gathering_location":
-        if travel_context.get("status") == "gathering_location":
-            print("In Travel Mode: Capturing user location...")
-            try:
-                location_response = factual_brain_model.generate_content(
-                    f"Extract the user's starting location from this message: '{latest_user_message}'",
-                    tools=[UserLocation]
-                )
-                function_call = location_response.candidates[0].content.parts[0].function_call
-                if function_call and function_call.args:
-                    start_location = function_call.args['start_location']
-                    destination = travel_context.get('destination_address')
-                    maps_url = f"https://www.google.com/maps/dir/{urlencode({'q': start_location})}/{urlencode({'q': destination})}"
-                    response_text = f"Got it. Here is the direct Google Maps link from **{start_location}** to **{travel_context.get('destination_name')}**. This will show you the live traffic conditions, including the causeway, and give you the most accurate travel time right now:\n\n[View live route on Google Maps]({maps_url})"
-                    return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {"status": "complete"}}
-            except Exception as e:
-                print(f"User Location Capture Error: {e}")
-                return {"response": "I'm sorry, I had trouble understanding that location. Could you please provide a postal code or neighborhood in Singapore?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "travel_context": travel_context}
-        else:
-            print("Starting Travel Mode...")
-            destination_clinic = None
-            try:
-                travel_intent_response = factual_brain_model.generate_content(f"Extract the clinic name if mentioned: '{latest_user_message}'", tools=[TravelIntent])
-                function_call = travel_intent_response.candidates[0].content.parts[0].function_call
-                if function_call and function_call.args and function_call.args.get('clinic_name'):
-                    clinic_name_query = function_call.args['clinic_name'].lower()
-                    for clinic in candidate_clinics:
-                        if clinic_name_query in clinic.get('name', '').lower():
-                            destination_clinic = clinic
-                            break
-            except Exception as e:
-                print(f"Travel Intent Extraction Error: {e}")
-            
-            if not destination_clinic and candidate_clinics:
-                if len(candidate_clinics) > 0:
-                    destination_clinic = candidate_clinics[0]
-
-            if destination_clinic:
-                new_travel_context = {
-                    "status": "gathering_location", "destination_name": destination_clinic.get('name'),
-                    "destination_address": destination_clinic.get('address')
-                }
-                response_text = f"I can help with that. To give you the best real-time travel estimate to **{destination_clinic.get('name')}**, what is your starting location or postal code in Singapore?"
-                return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": new_travel_context}
-            else:
-                return {"response": "I can help with travel time, but first I need to know which clinic you're interested in. Could you please specify a clinic?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
-
+   
     # --- BOOKING MODE LOGIC ---
     elif intent == ChatIntent.BOOK_APPOINTMENT or booking_context.get("status") in ["confirming_details", "gathering_info"]:
         if booking_context.get("status") == "confirming_details":
