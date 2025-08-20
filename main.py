@@ -111,7 +111,15 @@ def handle_chat(query: UserQuery):
     # STAGE 0: THE GATEKEEPER
     intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f"Classify the user's primary intent: 'find_clinic', 'book_appointment', or 'travel_advisory'.\n\nHistory:\n{conversation_history_for_prompt}"
+        gatekeeper_prompt = f"""
+Analyze the user's latest query and classify their primary intent. Choose one of the following: 'find_clinic', 'book_appointment', or 'travel_advisory'.
+
+- Choose 'travel_advisory' if the query is about travel, distance, directions, traffic, or "how long" it takes to get somewhere.
+- Choose 'book_appointment' if the query is about scheduling, making an appointment, or availability.
+- Otherwise, choose 'find_clinic'.
+
+Latest Query: "{latest_user_message}"
+""" 
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
         if function_call and function_call.args:
