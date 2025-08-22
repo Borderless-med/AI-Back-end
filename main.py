@@ -111,7 +111,6 @@ TRAVEL_KEYWORDS = [
     "traffic", "route", "map to", "navigate"
 ]
 
-# --- FIX #1A: Add high-confidence booking keywords ---
 BOOKING_KEYWORDS = [
     "book at", "book with", "appointment at", "appointment with", "schedule with", "i'd like to book"
 ]
@@ -120,14 +119,29 @@ BOOKING_KEYWORDS = [
 def read_root():
     return {"message": "Hello!"}
 
-# --- FIX #2A: Make the helper function bulletproof ---
+# --- This function now contains the advanced prompt ---
 def capture_user_info(latest_user_message: str, booking_context: dict, previous_filters: dict, candidate_clinics: list):
     try:
-        user_info_response = factual_brain_model.generate_content(
-            f"Extract the user's name, email, and WhatsApp number from this message: '{latest_user_message}'",
-            tools=[UserInfo]
-        )
-        # Check for a valid function call response from the model
+        # --- NEW: Advanced Prompt ---
+        extraction_prompt = f"""
+        You are an expert data extraction AI. Your only job is to analyze the user's message and populate the `UserInfo` tool with the extracted details.
+        You must call the `UserInfo` tool. Do not respond with any other text.
+        If any piece of information is missing, leave the corresponding field as null.
+
+        Here are some examples:
+        - User message: "hi my name is John Doe, email is john@test.com, phone is 12345"
+        - Your action: Call UserInfo(patient_name='John Doe', email_address='john@test.com', whatsapp_number='12345')
+
+        - User message: "Sure, it's Jane, jane@doe.com, 98765432"
+        - Your action: Call UserInfo(patient_name='Jane', email_address='jane@doe.com', whatsapp_number='98765432')
+
+        - User message: "My name is Peter Pan."
+        - Your action: Call UserInfo(patient_name='Peter Pan', email_address=None, whatsapp_number=None)
+
+        Now, analyze this message: "{latest_user_message}"
+        """
+        user_info_response = factual_brain_model.generate_content(extraction_prompt, tools=[UserInfo])
+        
         if user_info_response.candidates and user_info_response.candidates[0].content.parts:
             function_call = user_info_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
@@ -147,12 +161,10 @@ def capture_user_info(latest_user_message: str, booking_context: dict, previous_
                 final_response_text = f"Perfect, thank you! I have pre-filled the booking form for you. Please click this link to choose your preferred date and time, and to confirm your appointment:\n\n[Click here to complete your booking]({final_url})"
                 return {"response": final_response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {"status": "complete"}, "travel_context": {}}
             else:
-                # --- FIX #2B: Handle the case where the AI fails to extract info ---
                 print(f"Booking Info Capture Error: AI did not return valid function call args. Raw response: {user_info_response.text}")
                 final_response_text = "I had a little trouble capturing those details. Could you please provide them again in the format: Name, Email, and Phone Number?"
                 return {"response": final_response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
         else:
-            # --- FIX #2C: Handle the case of an empty or malformed AI response ---
             print(f"Booking Info Capture Error: AI returned an empty or malformed response.")
             final_response_text = "I had a little trouble capturing those details. Could you please provide them again in the format: Name, Email, and Phone Number?"
             return {"response": final_response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
@@ -181,7 +193,6 @@ def handle_chat(query: UserQuery):
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Booking Context: {booking_context}")
 
-    # --- Keyword Interceptor for Unsupported Travel Queries ---
     if any(keyword in latest_user_message for keyword in TRAVEL_KEYWORDS):
         print("Interceptor: Travel keyword detected. Sending canned response.")
         response_text = "Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
@@ -192,10 +203,8 @@ def handle_chat(query: UserQuery):
             "booking_context": booking_context
         }
 
-    # STAGE 0: GATEKEEPER (with Interceptor Safety Net)
-    intent = ChatIntent.FIND_CLINIC # Default intent
+    intent = ChatIntent.FIND_CLINIC
 
-    # --- FIX #1B: Booking Keyword Interceptor ---
     if any(keyword in latest_user_message for keyword in BOOKING_KEYWORDS):
         print("Interceptor: Booking keyword detected. Forcing book_appointment intent.")
         intent = ChatIntent.BOOK_APPOINTMENT
@@ -210,7 +219,6 @@ def handle_chat(query: UserQuery):
         except Exception as e:
             print(f"Gatekeeper Error: {e}. Defaulting to find_clinic.")
     
-    # --- BOOKING MODE LOGIC ---
     if intent == ChatIntent.BOOK_APPOINTMENT or booking_context.get("status") in ["confirming_details", "gathering_info"]:
         if booking_context.get("status") == "confirming_details":
             try:
@@ -268,7 +276,6 @@ def handle_chat(query: UserQuery):
                 print(f"Booking Intent Extraction Error: {e}")
                 return {"response": "I can help with that. Which clinic would you like to book?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}, "travel_context": {}}
 
-    # --- RECOMMENDATION MODE ---
     elif intent == ChatIntent.FIND_CLINIC:
         current_filters = {}
         try:
