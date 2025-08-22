@@ -39,7 +39,29 @@ class UserQuery(BaseModel):
     travel_context: Optional[dict] = Field(None, description="Context for an ongoing travel planning process.")
 
 class ServiceEnum(str, Enum):
-    tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; teeth_whitening = 'teeth_whitening'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; enamel_shaping = 'enamel_shaping'; braces = 'braces'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'
+    scaling_and_polishing = 'scaling_and_polishing'
+    tooth_filling = 'tooth_filling'
+    root_canal = 'root_canal'
+    dental_crown = 'dental_crown'
+    dental_implant = 'dental_implant'
+    wisdom_tooth = 'wisdom_tooth'
+    gum_treatment = 'gum_treatment'
+    dental_bonding = 'dental_bonding'
+    inlays_onlays = 'inlays_onlays'
+    teeth_whitening = 'teeth_whitening'
+    composite_veneers = 'composite_veneers'
+    porcelain_veneers = 'porcelain_veneers'
+    enamel_shaping = 'enamel_shaping'
+    braces = 'braces'
+    gingivectomy = 'gingivectomy'
+    bone_grafting = 'bone_grafting'
+    sinus_lift = 'sinus_lift'
+    frenectomy = 'frenectomy'
+    tmj_treatment = 'tmj_treatment'
+    sleep_apnea_appliances = 'sleep_apnea_appliances'
+    crown_lengthening = 'crown_lengthening'
+    oral_cancer_screening = 'oral_cancer_screening'
+    alveoplasty = 'alveoplasty'
 
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
@@ -316,11 +338,31 @@ def handle_chat(query: UserQuery):
                 factually_filtered_clinics = []
                 for clinic in quality_gated_clinics:
                     match = True
-                    if final_filters.get('township') and final_filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
-                    if final_filters.get('services'):
+                    
+                    if 'township' in final_filters:
+                        township_filter = final_filters['township'].lower()
+                        clinic_address = clinic.get('address', '').lower()
+                        
+                        aliases = {
+                            'jb': ['johor bahru'],
+                            'permas': ['permas jaya']
+                        }
+                        
+                        allowed_terms = [township_filter]
+                        if township_filter in aliases:
+                            allowed_terms.extend(aliases[township_filter])
+                        
+                        if not any(term in clinic_address for term in allowed_terms):
+                            match = False
+                    
+                    if match and final_filters.get('services'):
                         for service in final_filters.get('services'):
-                            if not clinic.get(service, False): match = False; break
-                    if match: factually_filtered_clinics.append(clinic)
+                            if not clinic.get(service, False):
+                                match = False
+                                break
+                    
+                    if match:
+                        factually_filtered_clinics.append(clinic)
                 qualified_clinics = factually_filtered_clinics
             else:
                 qualified_clinics = quality_gated_clinics
