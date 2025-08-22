@@ -106,43 +106,60 @@ RESET_KEYWORDS = [
     "back to the drawing board", "new chapter", "fresh chapter", "actually", "how about something else",
 ]
 
-# --- NEW: Keyword list for unsupported features ---
 TRAVEL_KEYWORDS = [
     "travel time", "how long", "get there", "drive to", "directions", "causeway", 
     "traffic", "route", "map to", "navigate"
+]
+
+# --- FIX #1A: Add high-confidence booking keywords ---
+BOOKING_KEYWORDS = [
+    "book at", "book with", "appointment at", "appointment with", "schedule with", "i'd like to book"
 ]
 
 @app.get("/")
 def read_root():
     return {"message": "Hello!"}
 
-# --- Helper function to capture user info (used in booking flow) ---
+# --- FIX #2A: Make the helper function bulletproof ---
 def capture_user_info(latest_user_message: str, booking_context: dict, previous_filters: dict, candidate_clinics: list):
     try:
         user_info_response = factual_brain_model.generate_content(
             f"Extract the user's name, email, and WhatsApp number from this message: '{latest_user_message}'",
             tools=[UserInfo]
         )
-        function_call = user_info_response.candidates[0].content.parts[0].function_call
-        if function_call and function_call.args:
-            user_args = function_call.args
-            base_url = "https://sg-jb-dental.lovable.app/book-now"
-            clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
-            params = {
-                'name': user_args.get('patient_name'),
-                'email': user_args.get('email_address'),
-                'phone': user_args.get('whatsapp_number'),
-                'clinic': clinic_name_safe,
-                'treatment': booking_context.get('treatment')
-            }
-            params = {k: v for k, v in params.items() if v}
-            query_string = urlencode(params)
-            final_url = f"{base_url}?{query_string}"
-            final_response_text = f"Perfect, thank you! I have pre-filled the booking form for you. Please click this link to choose your preferred date and time, and to confirm your appointment:\n\n[Click here to complete your booking]({final_url})"
-            return {"response": final_response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {"status": "complete"}, "travel_context": {}}
+        # Check for a valid function call response from the model
+        if user_info_response.candidates and user_info_response.candidates[0].content.parts:
+            function_call = user_info_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args:
+                user_args = function_call.args
+                base_url = "https://sg-jb-dental.lovable.app/book-now"
+                clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
+                params = {
+                    'name': user_args.get('patient_name'),
+                    'email': user_args.get('email_address'),
+                    'phone': user_args.get('whatsapp_number'),
+                    'clinic': clinic_name_safe,
+                    'treatment': booking_context.get('treatment')
+                }
+                params = {k: v for k, v in params.items() if v}
+                query_string = urlencode(params)
+                final_url = f"{base_url}?{query_string}"
+                final_response_text = f"Perfect, thank you! I have pre-filled the booking form for you. Please click this link to choose your preferred date and time, and to confirm your appointment:\n\n[Click here to complete your booking]({final_url})"
+                return {"response": final_response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {"status": "complete"}, "travel_context": {}}
+            else:
+                # --- FIX #2B: Handle the case where the AI fails to extract info ---
+                print(f"Booking Info Capture Error: AI did not return valid function call args. Raw response: {user_info_response.text}")
+                final_response_text = "I had a little trouble capturing those details. Could you please provide them again in the format: Name, Email, and Phone Number?"
+                return {"response": final_response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
+        else:
+            # --- FIX #2C: Handle the case of an empty or malformed AI response ---
+            print(f"Booking Info Capture Error: AI returned an empty or malformed response.")
+            final_response_text = "I had a little trouble capturing those details. Could you please provide them again in the format: Name, Email, and Phone Number?"
+            return {"response": final_response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
+
     except Exception as e:
-        print(f"Booking Info Capture Error: {e}")
-        final_response_text = "I'm sorry, I had trouble understanding those details. Please try entering them again: just your full name, email, and WhatsApp number."
+        print(f"Booking Info Capture Exception: {e}")
+        final_response_text = "I'm sorry, I encountered an error. Please try entering your details again: just your full name, email, and WhatsApp number."
         return {"response": final_response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
 
 @app.post("/chat")
@@ -163,42 +180,44 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
     print(f"Booking Context: {booking_context}")
-    print(f"Travel Context: {travel_context}")
 
-    # --- NEW: Keyword Interceptor for Unsupported Travel Queries ---
+    # --- Keyword Interceptor for Unsupported Travel Queries ---
     if any(keyword in latest_user_message for keyword in TRAVEL_KEYWORDS):
         print("Interceptor: Travel keyword detected. Sending canned response.")
         response_text = "Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
         return {
             "response": response_text,
-            "applied_filters": previous_filters, # Return previous state to not disrupt context
+            "applied_filters": previous_filters,
             "candidate_pool": candidate_clinics,
             "booking_context": booking_context
         }
 
-    # STAGE 0: THE GATEKEEPER
-    intent = ChatIntent.FIND_CLINIC
-    try:
-        gatekeeper_prompt = f"Classify the user's primary intent: 'find_clinic', or 'book_appointment'.\n\nHistory:\n{conversation_history_for_prompt}"
-        gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
-        function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
-        if function_call and function_call.args:
-            intent = function_call.args['intent']
-        print(f"Gatekeeper decided intent is: {intent}")
-    except Exception as e:
-        print(f"Gatekeeper Error: {e}. Defaulting to find_clinic.")
+    # STAGE 0: GATEKEEPER (with Interceptor Safety Net)
+    intent = ChatIntent.FIND_CLINIC # Default intent
+
+    # --- FIX #1B: Booking Keyword Interceptor ---
+    if any(keyword in latest_user_message for keyword in BOOKING_KEYWORDS):
+        print("Interceptor: Booking keyword detected. Forcing book_appointment intent.")
+        intent = ChatIntent.BOOK_APPOINTMENT
+    else:
+        try:
+            gatekeeper_prompt = f"Classify the user's primary intent: 'find_clinic', or 'book_appointment'.\n\nHistory:\n{conversation_history_for_prompt}"
+            gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
+            function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args:
+                intent = function_call.args['intent']
+            print(f"Gatekeeper decided intent is: {intent}")
+        except Exception as e:
+            print(f"Gatekeeper Error: {e}. Defaulting to find_clinic.")
     
     # --- BOOKING MODE LOGIC ---
     if intent == ChatIntent.BOOK_APPOINTMENT or booking_context.get("status") in ["confirming_details", "gathering_info"]:
-        # --- FIX #2: Handle user providing info before confirmation ---
         if booking_context.get("status") == "confirming_details":
-            # Check if the user is providing details instead of a simple "yes"
             try:
-                # A lightweight check to see if user info is present
-                user_info_check = factual_brain_model.generate_content(
-                    f"Does this message contain a name, email, or phone number? Answer with a JSON object {{'has_info': boolean}}. Message: '{latest_user_message}'"
+                user_info_check_response = factual_brain_model.generate_content(
+                    f"Does this message likely contain a person's name, email, or phone number? Answer with a JSON object {{'has_info': boolean}}. Message: '{latest_user_message}'"
                 )
-                check_result = json.loads(user_info_check.text.strip().replace("```json", "").replace("```", ""))
+                check_result = json.loads(user_info_check_response.text.strip().replace("```json", "").replace("```", ""))
                 if check_result.get("has_info"):
                     print("In Booking Mode: User provided info directly. Capturing details...")
                     booking_context["status"] = "gathering_info"
@@ -206,7 +225,6 @@ def handle_chat(query: UserQuery):
             except Exception as e:
                 print(f"Booking info pre-check failed: {e}")
 
-            # Original confirmation logic
             print("In Booking Mode: Processing user confirmation...")
             try:
                 confirmation_response = factual_brain_model.generate_content(f"Analyze the user's reply to the confirmation question. Reply: '{latest_user_message}'", tools=[Confirmation])
@@ -222,10 +240,9 @@ def handle_chat(query: UserQuery):
                             booking_context["treatment"] = confirm_args.get("corrected_treatment")
                             response_text = f"Got it, thank you for clarifying. So that's an appointment for **{booking_context['treatment']}** at **{booking_context['clinic_name']}**. Is that correct?"
                             return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context, "travel_context": {}}
-                        else: # Handle "no" without a correction
+                        else:
                             response_text = "My apologies. Let's start over. What can I help you with?"
                             return {"response": response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {}, "travel_context": {}}
-
             except Exception as e:
                 print(f"Booking Confirmation Error: {e}")
                 response_text = "Sorry, I had a little trouble understanding that. Could you please confirm with a 'yes' or 'no'?"
@@ -235,7 +252,7 @@ def handle_chat(query: UserQuery):
             print("In Booking Mode: Capturing user info...")
             return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics)
 
-        else: # Starting the booking process
+        else:
             print("Starting Booking Mode: Confirming details...")
             try:
                 booking_intent_response = factual_brain_model.generate_content(f"From the user's message, extract the name of the clinic they want to book. Message: '{latest_user_message}'", tools=[BookingIntent])
@@ -291,7 +308,6 @@ def handle_chat(query: UserQuery):
             print("Deterministic Planner decided: REPLACE (reset keyword found).")
             final_filters = current_filters
             candidate_clinics = []
-        # --- FIX #1: Prevent state corruption from location-only queries ---
         elif 'township' in current_filters and 'services' not in current_filters:
             print("Deterministic Planner decided: REPLACE (location-only query).")
             final_filters = current_filters
@@ -425,5 +441,4 @@ def handle_chat(query: UserQuery):
         }
 
     else:
-        # This fallback is unlikely to be hit with the new interceptor, but is good for safety.
         return {"response": "An error occurred in routing.", "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
