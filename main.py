@@ -195,7 +195,7 @@ def handle_chat(query: UserQuery):
 
     if any(keyword in latest_user_message for keyword in TRAVEL_KEYWORDS):
         print("Interceptor: Travel keyword detected. Sending canned response.")
-        response_text = "Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
+        response_text = "DEVELOPMENT: Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
         return {
             "response": response_text,
             "applied_filters": previous_filters,
