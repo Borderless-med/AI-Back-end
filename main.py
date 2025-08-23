@@ -10,6 +10,7 @@ import json
 import numpy as np
 from numpy.linalg import norm
 from urllib.parse import urlencode
+import string
 
 # --- Load environment variables and configure clients ---
 load_dotenv()
@@ -119,10 +120,8 @@ BOOKING_KEYWORDS = [
 def read_root():
     return {"message": "Hello!"}
 
-# --- This function now contains the advanced prompt ---
 def capture_user_info(latest_user_message: str, booking_context: dict, previous_filters: dict, candidate_clinics: list):
     try:
-        # --- NEW: Advanced Prompt ---
         extraction_prompt = f"""
         You are an expert data extraction AI. Your only job is to analyze the user's message and populate the `UserInfo` tool with the extracted details.
         You must call the `UserInfo` tool. Do not respond with any other text.
@@ -195,7 +194,7 @@ def handle_chat(query: UserQuery):
 
     if any(keyword in latest_user_message for keyword in TRAVEL_KEYWORDS):
         print("Interceptor: Travel keyword detected. Sending canned response.")
-        response_text = "DEVELOPMENT: Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
+        response_text = "Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
         return {
             "response": response_text,
             "applied_filters": previous_filters,
@@ -308,11 +307,20 @@ def handle_chat(query: UserQuery):
         except Exception as e:
             print(f"Factual Brain Error: {e}")
 
+        if 'township' in current_filters:
+            current_filters['township'] = current_filters['township'].rstrip(string.punctuation)
+            print(f"Sanitized township to: '{current_filters['township']}'")
+
         final_filters = {}
         user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
+        # --- THIS IS THE NEW, SMARTER PLANNER LOGIC ---
         if user_wants_to_reset:
             print("Deterministic Planner decided: REPLACE (reset keyword found).")
+            final_filters = current_filters
+            candidate_clinics = []
+        elif 'services' in current_filters and 'township' not in current_filters:
+            print("Deterministic Planner decided: REPLACE (new service-only query implies new context).")
             final_filters = current_filters
             candidate_clinics = []
         elif 'township' in current_filters and 'services' not in current_filters:
