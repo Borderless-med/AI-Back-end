@@ -109,7 +109,7 @@ RESET_KEYWORDS = [
 
 TRAVEL_KEYWORDS = [
     "travel time", "how long", "get there", "drive to", "directions", "causeway", 
-    "traffic", "route", "map to", "navigate"
+    "traffic", "route", "map to", "navigate", "get to", "how to get"
 ]
 
 BOOKING_KEYWORDS = [
