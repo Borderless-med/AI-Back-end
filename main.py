@@ -39,21 +39,23 @@ class UserQuery(BaseModel):
     booking_context: Optional[dict] = Field(None, description="Context for an ongoing booking process.")
     travel_context: Optional[dict] = Field(None, description="Context for an ongoing travel planning process.")
 
+# --- MODIFIED: This Enum is now a perfect mirror of the database schema ---
 class ServiceEnum(str, Enum):
-    scaling_and_polishing = 'scaling_and_polishing'
+    scaling = 'scaling'
+    braces = 'braces'
     tooth_filling = 'tooth_filling'
     root_canal = 'root_canal'
     dental_crown = 'dental_crown'
     dental_implant = 'dental_implant'
+    teeth_whitening = 'teeth_whitening'
+    veneers = 'veneers'
     wisdom_tooth = 'wisdom_tooth'
     gum_treatment = 'gum_treatment'
-    dental_bonding = 'dental_bonding'
-    inlays_onlays = 'inlays_onlays'
-    teeth_whitening = 'teeth_whitening'
     composite_veneers = 'composite_veneers'
     porcelain_veneers = 'porcelain_veneers'
+    dental_bonding = 'dental_bonding'
+    inlays_onlays = 'inlays_onlays'
     enamel_shaping = 'enamel_shaping'
-    braces = 'braces'
     gingivectomy = 'gingivectomy'
     bone_grafting = 'bone_grafting'
     sinus_lift = 'sinus_lift'
@@ -63,7 +65,8 @@ class ServiceEnum(str, Enum):
     crown_lengthening = 'crown_lengthening'
     oral_cancer_screening = 'oral_cancer_screening'
     alveoplasty = 'alveoplasty'
-
+    general_dentistry = 'general_dentistry'
+    
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
@@ -194,7 +197,7 @@ def handle_chat(query: UserQuery):
 
     if any(keyword in latest_user_message for keyword in TRAVEL_KEYWORDS):
         print("Interceptor: Travel keyword detected. Sending canned response.")
-        response_text = "DEVELOPMENT:Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
+        response_text = "DEVELOPMENT: Sorry, but I am still not equipped to give travel advisory. For the most accurate travel time, I recommend using Google Maps or Waze."
         return {
             "response": response_text,
             "applied_filters": previous_filters,
@@ -314,7 +317,6 @@ def handle_chat(query: UserQuery):
         final_filters = {}
         user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
-        # --- THIS IS THE NEW, SMARTER PLANNER LOGIC ---
         if user_wants_to_reset:
             print("Deterministic Planner decided: REPLACE (reset keyword found).")
             final_filters = current_filters
