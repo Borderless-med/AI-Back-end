@@ -1,0 +1,20 @@
+[33m763520c[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/booking-assist[m[33m, [m[1;31morigin/feature/booking-assist[m[33m)[m fix: Make Gatekeeper context-aware for multi-turn flows
+[33m212204b[m fix: Harden Gatekeeper prompt for intent routing
+[33m9f5c3f9[m hotfix: Restore complete application logic
+[33me2682f4[m hotfix: Restore complete application logic
+[33me0b1aa6[m feat: Add Travel Advisor functionality
+[33m66b8ef5[m hotfix: Update base_url to final public booking page URL
+[33mdf6b1cf[m hotfix: Correct final booking URL to live demo link
+[33m31b352d[m fix: Finalize and harden all AI and application logic
+[33m74164c1[m hotfix: Update booking URL to correct live demo link
+[33mcdd7dd2[m hotfix: Correct critical NameError and restore full logic
+[33maeb30ab[m hotfix: Update booking URL to correct demo link
+[33mc9a6f02[m hotfix: Correct URL generation for booking handoff
+[33m61f3ba0[m feat: Implement final Gatekeeper architecture with booking
+[33mad584e4[m feat: Implement Gatekeeper model for intent routing
+[33md06725e[m hotfix: Deploy final, complete version with all features
+[33m85877c3[m feat: Add final, bug-fixed Assisted Booking flow
+[33m3fe8e39[m[33m ([m[1;31morigin/feature/session-memory[m[33m, [m[1;32mfeature/session-memory[m[33m)[m fix: Harden Factual Brain with Two-Prompt safety net
+[33m556c5d3[m feat: Implement Filter Engine architecture
+[33m64ef878[m fix: Correct critical deployment-blocking errors
+[33m008f7c2[m fix: Correct critical deployment-blocking errors

@@ -1,0 +1,26 @@
+
+Supabase DB_password:
+postgresql://postgres.uzppuebjzqxeavgmwtvr:Xj70iNLJzWI2ezQ8@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+p/w:   Xj70iNLJzWI2ezQ8
+
+Gemini API p/w:
+AIzaSyDGM-D8nZKKiJSh2TLtLQ7BhfeYYWsI258
+
+
+Supabase Project URL:    
+https://uzppuebjzqxeavgmwtvr.supabase.co
+
+Supabase API Keys -Anon:
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6cHB1ZWJqenF4ZWF2Z213dHZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0MDMxNTQsImV4cCI6MjA2NTk3OTE1NH0.kxPUYZ1LO1kcGiOy7Vtf2MwAfdi_dv4lzJQMdHGnmbA
+
+
+Google Place API Key
+AIzaSyBEVHlQ2GV9Kt-ePu6RkOwm_x4ORVfRtyM
+
+NEW API @ 22 July 2025
+
+Gemini AI Key for SG-JB Platform   (credential only for Gen Language API)
+AIzaSyBKo5GhgyU6p3sAfv5987jRJGwUMREie74
+
+Google Places Key for SG-JB Platform
+AIzaSyDsA3twpBYkgCpoIBrMwc3rs7Q5MSHvcHg
