@@ -83,45 +83,40 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
 
-    # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
+    # --- STAGE 1: THE BULLETPROOF GATEKEEPER ---
     intent = ChatIntent.FIND_CLINIC # Default intent
     try:
+        # This new prompt is more forceful and less likely to fail.
         gatekeeper_prompt = f"""
-        You are an expert Gatekeeper AI for a dental concierge. Your only job is to classify the user's intent into one of four categories based on their most recent message. Respond with only the function call.
+        You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
-        Here are your categories and examples:
-        1. 'find_clinic': The user is asking to find, locate, or get recommendations for a dental clinic.
-            - "find me a clinic for crowns in JB"
-            - "which is the most affordable option?"
-            - "any clinics near permas jaya"
+        Classify the user's most recent message into one of these four categories:
+        - 'find_clinic': If the user is asking to find or get recommendations for a dental clinic.
+        - 'book_appointment': If the user is asking to schedule or make an appointment.
+        - 'general_dental_question': If the user is asking a general question about dental health, procedures, or costs (e.g., "what is a root canal?", "do veneers hurt?").
+        - 'out_of_scope': If the query is clearly not related to dentistry (e.g., greetings, weather, directions, random questions).
 
-        2. 'book_appointment': The user is asking to book, schedule, or make an appointment.
-            - "I'd like to book at Q&M Dental"
-            - "can I make an appointment?"
-
-        3. 'general_dental_question': The user is asking a general question about dental health, procedures, or costs.
-            - "what is a root canal?"
-            - "do veneers hurt?"
-            - "how much is scaling?"
-
-        4. 'out_of_scope': The query is not related to dentistry at all. This includes greetings, travel questions, weather, or random statements.
-            - "how are you doing today?"
-            - "what's the weather like?"
-            - "how to get to the clinic?"
-
-        Analyze the user's most recent message from the conversation below and classify it.
-        ---
-        User conversation history:
+        Conversation History:
         {conversation_history_for_prompt}
-        ---
+
+        You must call the `GatekeeperDecision` tool with your classification.
         """
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
-        function_call = gatekeeper_response.candidates[0].content.parts[0].function_call
-        if function_call and function_call.args:
-            intent = function_call.args['intent']
-        print(f"Gatekeeper decided intent is: {intent}")
+        
+        # Improved error handling and logging
+        part = gatekeeper_response.candidates[0].content.parts[0]
+        if hasattr(part, 'function_call') and part.function_call.args:
+            intent = part.function_call.args['intent']
+            print(f"Gatekeeper decided intent is: {intent}")
+        else:
+            # This will now log the AI's actual (wrong) response, giving us a clue if it fails again.
+            print(f"Gatekeeper Error: AI did not return a valid function call. Raw response: {gatekeeper_response.text}")
+            # We can add a fallback logic here if needed, but for now, we default.
+            intent = ChatIntent.FIND_CLINIC
+
     except Exception as e:
-        print(f"Gatekeeper Error: {e}. Defaulting to find_clinic.")
+        print(f"Gatekeeper Exception: An exception occurred: {e}")
+        intent = ChatIntent.FIND_CLINIC
 
     # --- STAGE 2: THE ROUTER ---
     response_data = {}
@@ -153,20 +148,17 @@ def handle_chat(query: UserQuery):
             latest_user_message=latest_user_message,
             generation_model=generation_model
         )
-        # Preserve the user's previous search context
         response_data["applied_filters"] = previous_filters
         response_data["candidate_pool"] = candidate_clinics
         response_data["booking_context"] = booking_context
 
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
-        # Preserve the user's previous search context
         response_data["applied_filters"] = previous_filters
         response_data["candidate_pool"] = candidate_clinics
         response_data["booking_context"] = booking_context
 
     else:
-        # A final safety net in case the Gatekeeper fails unexpectedly
         response_data = {"response": "I'm sorry, I encountered an unexpected error."}
 
     return response_data
