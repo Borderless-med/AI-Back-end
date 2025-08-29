@@ -1,155 +1,109 @@
-import os
-import google.generativeai as genai
-from dotenv import load_dotenv
-from fastapi import FastAPI
+import json
+from urllib.parse import urlencode
 from pydantic import BaseModel, Field
-from supabase import create_client, Client
-from enum import Enum
-from typing import List, Optional
+from typing import Optional, List
 
-# --- Load environment variables and configure clients ---
-load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=gemini_api_key)
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
+# --- Pydantic Models required for this flow ---
+class BookingIntent(BaseModel):
+    clinic_name: str = Field(..., description="The name of the dental clinic the user wants to book.")
 
-# --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-embedding_model = 'models/embedding-001'
-generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-
-# --- Pydantic Data Models (Centralized) ---
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class UserQuery(BaseModel):
-    history: List[ChatMessage]
-    applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
-    candidate_pool: Optional[List[dict]] = Field(None, description="The full list of candidates from the initial semantic search.")
-    booking_context: Optional[dict] = Field(None, description="Context for an ongoing booking process.")
-
-# --- Gatekeeper Intent Definitions ---
-class ChatIntent(str, Enum):
-    FIND_CLINIC = "find_clinic"
-    BOOK_APPOINTMENT = "book_appointment"
-    GENERAL_DENTAL_QUESTION = "general_dental_question"
-    OUT_OF_SCOPE = "out_of_scope"
-
-class GatekeeperDecision(BaseModel):
-    intent: ChatIntent
-
-# --- FastAPI App ---
-app = FastAPI()
-
-RESET_KEYWORDS = [
-    "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
-    "clear filters", "let's try that again", "take two", "start from the top", "do-over",
-    "change the subject", "new topic", "new search", "change course", "new direction",
-    "switch gears", "let's pivot", "about face", "u-turn", "take another tack", "clean slate",
-    "wipe the slate clean", "blank canvas", "empty page", "clean sheet", "back to square one",
-    "back to the drawing board", "new chapter", "fresh chapter", "actually", "how about something else",
-]
-
-@app.get("/")
-def read_root():
-    return {"message": "Hello!"}
-
-@app.post("/chat")
-def handle_chat(query: UserQuery):
-    if not query.history:
-        return {"response": "Error: History is empty."}
+class UserInfo(BaseModel):
+    patient_name: str = Field(..., description="The user's full name.")
+    email_address: str = Field(..., description="The user's email address.")
+    whatsapp_number: str = Field(..., description="The user's WhatsApp number, including country code if provided.")
     
-    # --- Centralized State Management ---
-    latest_user_message = query.history[-1].content.lower()
-    previous_filters = query.applied_filters or {}
-    candidate_clinics = query.candidate_pool or []
-    booking_context = query.booking_context or {}
-    
-    conversation_history_for_prompt = ""
-    for msg in query.history:
-        conversation_history_for_prompt += f"{msg.role}: {msg.content}\n"
+class Confirmation(BaseModel):
+    is_confirmed: bool = Field(..., description="True if the user confirms ('yes', 'correct'), false if they deny or want to change something.")
+    corrected_treatment: Optional[str] = Field(None, description="If the user wants a different treatment, extract the new treatment name.")
+    corrected_clinic: Optional[str] = Field(None, description="If the user wants to book at a different clinic, extract the new clinic name.")
 
-    print(f"\n--- New Request ---")
-    print(f"Latest User Query: '{latest_user_message}'")
-
-    # --- STAGE 1: THE UPGRADED GATEKEEPER ---
-    intent = ChatIntent.FIND_CLINIC # Default intent
+# --- Helper function for capturing user details ---
+def capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
     try:
-        # --- THIS IS THE NEW, UPGRADED PROMPT ---
-        gatekeeper_prompt = f"""
-        You are an expert intent classification AI for a dental concierge. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
-
-        **Decision Logic:**
-        - If the user is describing their dental needs or asking to find a clinic (e.g., "I need a filling," "find clinics for braces"), the intent is `find_clinic`.
-        - If the user is explicitly asking to schedule, reserve a time, or make an appointment (e.g., "I want to book an appointment," "can I schedule a visit?"), the intent is `book_appointment`.
-        - If the user is asking a general knowledge question about dentistry (e.g., "what is a root canal?", "do veneers hurt?"), the intent is `general_dental_question`.
-        - If the query is clearly not about dentistry (greetings, weather, directions, etc.), the intent is `out_of_scope`.
-
-        Conversation History:
-        {conversation_history_for_prompt}
-
-        Analyze the user's MOST RECENT message and call the `GatekeeperDecision` tool with your classification.
+        extraction_prompt = f"""
+        You are an expert data extraction AI. Your only job is to analyze the user's message and populate the `UserInfo` tool.
+        You must call the `UserInfo` tool. Do not respond with any other text.
+        Examples:
+        - User: "my name is John Doe, email is john@test.com, phone is 12345" -> Your action: UserInfo(patient_name='John Doe', email_address='john@test.com', whatsapp_number='12345')
+        Analyze this message: "{latest_user_message}"
         """
-        gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
+        user_info_response = factual_brain_model.generate_content(extraction_prompt, tools=[UserInfo])
         
-        part = gatekeeper_response.candidates[0].content.parts[0]
-        if hasattr(part, 'function_call') and part.function_call.args:
-            intent = part.function_call.args['intent']
-            print(f"Gatekeeper decided intent is: {intent}")
-        else:
-            print(f"Gatekeeper Error: AI did not return a valid function call. Raw response: {gatekeeper_response.text}")
-            intent = ChatIntent.FIND_CLINIC
-
+        if user_info_response.candidates and user_info_response.candidates[0].content.parts:
+            function_call = user_info_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args:
+                user_args = function_call.args
+                base_url = "https://sg-jb-dental.lovable.app/book-now"
+                clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
+                params = {
+                    'name': user_args.get('patient_name'), 'email': user_args.get('email_address'),
+                    'phone': user_args.get('whatsapp_number'), 'clinic': clinic_name_safe,
+                    'treatment': booking_context.get('treatment')
+                }
+                params = {k: v for k, v in params.items() if v}
+                query_string = urlencode(params)
+                final_url = f"{base_url}?{query_string}"
+                final_response_text = f"Perfect, thank you! I have pre-filled the booking form for you. Please click this link to choose your preferred date and time, and to confirm your appointment:\n\n[Click here to complete your booking]({final_url})"
+                return {"response": final_response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {"status": "complete"}}
     except Exception as e:
-        print(f"Gatekeeper Exception: An exception occurred: {e}")
-        intent = ChatIntent.FIND_CLINIC
+        print(f"Booking Info Capture Exception: {e}")
+        return {"response": "I'm sorry, I had trouble capturing those details. Please try again.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
 
-    # --- STAGE 2: THE ROUTER ---
-    response_data = {}
+# --- The main handler function for this flow ---
+def handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
+    if booking_context.get("status") == "confirming_details":
+        try:
+            pre_check_prompt = f'You are a JSON validation expert. Your only job is to determine if the user\'s message contains personal contact information. You MUST respond with a single, valid JSON object: {{"has_info": boolean}}.\nExamples:\n- User Message: "My name is John" -> Your Response: {{"has_info": true}}\n- User Message: "yes that is correct" -> Your Response: {{"has_info": false}}\nAnalyze this message: "{latest_user_message}"'
+            user_info_check_response = factual_brain_model.generate_content(pre_check_prompt)
+            check_result = json.loads(user_info_check_response.text.strip().replace("```json", "").replace("```", ""))
+            if check_result.get("has_info"):
+                print("In Booking Mode: User provided info directly. Capturing details...")
+                booking_context["status"] = "gathering_info"
+                return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
+        except Exception as e:
+            print(f"Booking info pre-check failed: {e}")
 
-    if intent == ChatIntent.FIND_CLINIC:
-        response_data = handle_find_clinic(
-            latest_user_message=latest_user_message,
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model,
-            ranking_brain_model=ranking_brain_model,
-            embedding_model=embedding_model,
-            generation_model=generation_model,
-            supabase=supabase,
-            RESET_KEYWORDS=RESET_KEYWORDS
-        )
+        print("In Booking Mode: Processing user confirmation...")
+        try:
+            confirmation_response = factual_brain_model.generate_content(f"Analyze the user's reply for confirmation and corrections. Reply: '{latest_user_message}'", tools=[Confirmation])
+            function_call = confirmation_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args:
+                confirm_args = function_call.args
+                if confirm_args.get("is_confirmed"):
+                    booking_context["status"] = "gathering_info"
+                    response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
+                    return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
+                else:
+                    if confirm_args.get("corrected_treatment") or confirm_args.get("corrected_clinic"):
+                        if confirm_args.get("corrected_treatment"): booking_context["treatment"] = confirm_args.get("corrected_treatment")
+                        if confirm_args.get("corrected_clinic"): booking_context["clinic_name"] = confirm_args.get("corrected_clinic")
+                        response_text = f"Got it, thank you for clarifying. So that's an appointment for **{booking_context['treatment']}** at **{booking_context['clinic_name']}**. Is that correct?"
+                        return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
+                    else:
+                        response_text = "My apologies. Let's start over. What can I help you with?"
+                        return {"response": response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+        except Exception as e:
+            print(f"Booking Confirmation Error: {e}")
+            return {"response": "Sorry, I had a little trouble understanding. Please confirm with a 'yes' or 'no', or let me know what you'd like to change.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
     
-    elif intent == ChatIntent.BOOK_APPOINTMENT:
-        response_data = handle_booking_flow(
-            latest_user_message=latest_user_message,
-            booking_context=booking_context,
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model
-        )
-
-    elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
-        response_data = handle_qna(
-            latest_user_message=latest_user_message,
-            generation_model=generation_model
-        )
-        response_data["applied_filters"] = previous_filters
-        response_data["candidate_pool"] = candidate_clinics
-        response_data["booking_context"] = booking_context
-
-    elif intent == ChatIntent.OUT_OF_SCOPE:
-        response_data = handle_out_of_scope(latest_user_message)
-        response_data["applied_filters"] = previous_filters
-        response_data["candidate_pool"] = candidate_clinics
-        response_data["booking_context"] = booking_context
+    elif booking_context.get("status") == "gathering_info":
+        print("In Booking Mode: Capturing user info...")
+        return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
 
     else:
-        response_data = {"response": "I'm sorry, I encountered an unexpected error."}
-
-    return response_data
+        print("Starting Booking Mode...")
+        try:
+            booking_intent_response = factual_brain_model.generate_content(f"Extract the name of the dental clinic from the user's message. Message: '{latest_user_message}'", tools=[BookingIntent])
+            function_call = booking_intent_response.candidates[0].content.parts[0].function_call
+            if function_call and function_call.args and function_call.args.get('clinic_name'):
+                clinic_name = function_call.args.get('clinic_name')
+                treatment = (previous_filters.get('services') or ["a consultation"])[0]
+                new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment}
+                response_text = f"Great! I can help you get started with booking. Just to confirm, are you looking to book an appointment for **{treatment}** at **{clinic_name}**?"
+                return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": new_booking_context}
+            else:
+                print("Booking Intent Extraction Failed: No clinic name found.")
+                return {"response": "I can help with booking an appointment. Please let me know the name of the clinic you're interested in.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
+        except Exception as e:
+            print(f"Booking Intent Extraction Error: {e}")
+            return {"response": "I can help with that. Which clinic would you like to book?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}

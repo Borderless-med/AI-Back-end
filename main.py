@@ -70,7 +70,6 @@ def handle_chat(query: UserQuery):
     if not query.history:
         return {"response": "Error: History is empty."}
     
-    # --- Centralized State Management ---
     latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
     candidate_clinics = query.candidate_pool or []
@@ -83,42 +82,36 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
 
-    # --- STAGE 1: THE BULLETPROOF GATEKEEPER ---
-    intent = ChatIntent.FIND_CLINIC # Default intent
+    intent = ChatIntent.FIND_CLINIC
     try:
-        # This new prompt is more forceful and less likely to fail.
         gatekeeper_prompt = f"""
         You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
-        Classify the user's most recent message into one of these four categories:
-        - 'find_clinic': If the user is asking to find or get recommendations for a dental clinic.
-        - 'book_appointment': If the user is asking to schedule or make an appointment.
-        - 'general_dental_question': If the user is asking a general question about dental health, procedures, or costs (e.g., "what is a root canal?", "do veneers hurt?").
-        - 'out_of_scope': If the query is clearly not related to dentistry (e.g., greetings, weather, directions, random questions).
+        **Decision Logic:**
+        - If the user is describing their dental needs or asking to find a clinic (e.g., "I need a filling," "find clinics for braces"), the intent is `find_clinic`.
+        - If the user is explicitly asking to schedule, reserve a time, or make an appointment (e.g., "I want to book an appointment," "can I schedule a visit?"), the intent is `book_appointment`.
+        - If the user is asking a general knowledge question about dentistry (e.g., "what is a root canal?", "do veneers hurt?"), the intent is `general_dental_question`.
+        - If the query is clearly not about dentistry (greetings, weather, directions, etc.), the intent is `out_of_scope`.
 
         Conversation History:
         {conversation_history_for_prompt}
 
-        You must call the `GatekeeperDecision` tool with your classification.
+        Analyze the user's MOST RECENT message and call the `GatekeeperDecision` tool with your classification.
         """
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         
-        # Improved error handling and logging
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
             print(f"Gatekeeper decided intent is: {intent}")
         else:
-            # This will now log the AI's actual (wrong) response, giving us a clue if it fails again.
             print(f"Gatekeeper Error: AI did not return a valid function call. Raw response: {gatekeeper_response.text}")
-            # We can add a fallback logic here if needed, but for now, we default.
             intent = ChatIntent.FIND_CLINIC
 
     except Exception as e:
         print(f"Gatekeeper Exception: An exception occurred: {e}")
         intent = ChatIntent.FIND_CLINIC
 
-    # --- STAGE 2: THE ROUTER ---
     response_data = {}
 
     if intent == ChatIntent.FIND_CLINIC:

@@ -6,8 +6,9 @@ from numpy.linalg import norm
 from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 from enum import Enum
-from typing import Optional, List # Corrected import
+from typing import Optional, List
 
+# --- Pydantic Models required for this flow ---
 class ServiceEnum(str, Enum):
     scaling = 'scaling'
     braces = 'braces'
@@ -39,6 +40,7 @@ class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
 
+# --- The main handler function for this flow ---
 def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS):
     current_filters = {}
     try:
@@ -54,14 +56,7 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
         if not current_filters:
             print("Factual Brain: Tool Call failed. Attempting Safety Net Prompt...")
             service_list_str = ", ".join([f"'{e.value}'" for e in ServiceEnum])
-            safety_net_prompt = f"""
-            Analyze the user's query and extract information into a JSON object.
-            User Query: "{latest_user_message}"
-            1.  **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.
-            2.  **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.
-            Your response MUST be a single, valid JSON object and nothing else.
-            Example: {{"service": "dental_implant", "township": "johor bahru"}}
-            """
+            safety_net_prompt = f'Analyze the user\'s query and extract information into a JSON object. User Query: "{latest_user_message}"\n 1. **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.\n 2. **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.\n Your response MUST be a single, valid JSON object and nothing else.\n Example: {{"service": "dental_implant", "township": "johor bahru"}}'
             safety_net_response = factual_brain_model.generate_content(safety_net_prompt)
             json_text = safety_net_response.text.strip().replace("```json", "").replace("```", "")
             extracted_data = json.loads(json_text)
@@ -99,18 +94,8 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
 
     ranking_priorities = []
     try:
-        ranking_prompt = f"""
-        Analyze the user's latest query to determine their ranking priorities. Your response MUST be a valid JSON list of strings.
-        The list can contain 'sentiment_dentist_skill', 'sentiment_cost_value', 'sentiment_convenience'.
-        - If query mentions 'convenience', 'location', 'near', include "sentiment_convenience".
-        - If query mentions 'quality', 'skill', 'best', 'top-rated', or a complex service, include "sentiment_dentist_skill".
-        - If query mentions 'cost', 'value', 'affordable', 'cheap', include "sentiment_cost_value".
-        - If multiple are mentioned, return them in order of importance. If ambiguous, return an empty list [].
-        User Query: "{latest_user_message}"
-        Respond with ONLY the JSON list.
-        """
+        ranking_prompt = f'Analyze the user\'s latest query to determine their ranking priorities. Your response MUST be a valid JSON list of strings.\n The list can contain \'sentiment_dentist_skill\', \'sentiment_cost_value\', \'sentiment_convenience\'.\n - If query mentions \'convenience\', \'location\', \'near\', include "sentiment_convenience".\n - If query mentions \'quality\', \'skill\', \'best\', \'top-rated\', or a complex service, include "sentiment_dentist_skill".\n - If query mentions \'cost\', \'value\', \'affordable\', \'cheap\', include "sentiment_cost_value".\n - If multiple are mentioned, return them in order of importance. If ambiguous, return an empty list [].\n User Query: "{latest_user_message}"\n Respond with ONLY the JSON list.'
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
-        print(f"Ranking Brain raw response: {ranking_response.text}")
         json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
         ranking_priorities = json.loads(json_text)
         print(f"Ranking Brain determined priorities: {ranking_priorities}")
@@ -140,31 +125,11 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
             factually_filtered_clinics = []
             for clinic in quality_gated_clinics:
                 match = True
-                
-                if 'township' in final_filters:
-                    township_filter = final_filters['township'].lower()
-                    clinic_address = clinic.get('address', '').lower()
-                    
-                    aliases = {
-                        'jb': ['johor bahru'],
-                        'permas': ['permas jaya']
-                    }
-                    
-                    allowed_terms = [township_filter]
-                    if township_filter in aliases:
-                        allowed_terms.extend(aliases[township_filter])
-                    
-                    if not any(term in clinic_address for term in allowed_terms):
-                        match = False
-                
-                if match and final_filters.get('services'):
+                if 'township' in final_filters and final_filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
+                if 'services' in final_filters:
                     for service in final_filters.get('services'):
-                        if not clinic.get(service, False):
-                            match = False
-                            break
-                
-                if match:
-                    factually_filtered_clinics.append(clinic)
+                        if not clinic.get(service, False): match = False; break
+                if match: factually_filtered_clinics.append(clinic)
             qualified_clinics = factually_filtered_clinics
         else:
             qualified_clinics = quality_gated_clinics
@@ -196,19 +161,7 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
             clinic_data_for_prompt.append(clinic_info)
         context = json.dumps(clinic_data_for_prompt, indent=2)
     
-    augmented_prompt = f"""
-    You are a Data Formatter. Your only job is to present the user with a list of dental clinics based on the pre-ranked JSON data provided below. You MUST NOT change the order of the clinics.
-    **Data (Pre-ranked list of clinics):**
-    ```json
-    {context}
-    ```
-    ---
-    **Your Formatting Task:**
-    1.  **Analyze User's Query:** Review the user's original query: "{latest_user_message}".
-    2.  **Present Clinics in Order:** Display the clinics from the JSON data in the exact order provided. Use "Top Recommendation" for position 1 and "Alternative Option(s)" for others. Format details as bullet points.
-    3.  **Add Concluding Note:** After the list, add a "Please note:" section. If the user's query contained subjective words (like "best" or "affordable"), your note must be honest about this limitation. Example: "Please note: While I've ranked these clinics based on their high ratings, 'best' is subjective and I recommend checking recent reviews."
-    ---
-    """
+    augmented_prompt = f'You are a Data Formatter. Your only job is to present the user with a list of dental clinics based on the pre-ranked JSON data provided below. You MUST NOT change the order of the clinics.\n **Data (Pre-ranked list of clinics):**\n ```json\n{context}\n```\n ---\n **Your Formatting Task:**\n 1. **Analyze User\'s Query:** Review the user\'s original query: "{latest_user_message}".\n 2. **Present Clinics in Order:** Display the clinics from the JSON data in the exact order provided. Use "Top Recommendation" for position 1 and "Alternative Option(s)" for others. Format details as bullet points.\n 3. **Add Concluding Note:** After the list, add a "Please note:" section. If the user\'s query contained subjective words (like "best" or "affordable"), your note must be honest about this limitation. Example: "Please note: While I\'ve ranked these clinics based on their high ratings, \'best\' is subjective and I recommend checking recent reviews."\n ---'
     final_response = generation_model.generate_content(augmented_prompt)
     
     return {
