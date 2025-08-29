@@ -7,12 +7,6 @@ from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
 
-# --- Import all four of our new, separated flow handlers ---
-from flows.find_clinic_flow import handle_find_clinic
-from flows.booking_flow import handle_booking_flow
-from flows.qna_flow import handle_qna
-from flows.outofscope_flow import handle_out_of_scope
-
 # --- Load environment variables and configure clients ---
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
