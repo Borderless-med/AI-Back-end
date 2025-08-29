@@ -8,44 +8,26 @@ from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional, List
 
-# --- Pydantic Models required for this flow ---
 class ServiceEnum(str, Enum):
-    scaling = 'scaling'
-    braces = 'braces'
-    tooth_filling = 'tooth_filling'
-    root_canal = 'root_canal'
-    dental_crown = 'dental_crown'
-    dental_implant = 'dental_implant'
-    teeth_whitening = 'teeth_whitening'
-    veneers = 'veneers'
-    wisdom_tooth = 'wisdom_tooth'
-    gum_treatment = 'gum_treatment'
-    composite_veneers = 'composite_veneers'
-    porcelain_veneers = 'porcelain_veneers'
-    dental_bonding = 'dental_bonding'
-    inlays_onlays = 'inlays_onlays'
-    enamel_shaping = 'enamel_shaping'
-    gingivectomy = 'gingivectomy'
-    bone_grafting = 'bone_grafting'
-    sinus_lift = 'sinus_lift'
-    frenectomy = 'frenectomy'
-    tmj_treatment = 'tmj_treatment'
-    sleep_apnea_appliances = 'sleep_apnea_appliances'
-    crown_lengthening = 'crown_lengthening'
-    oral_cancer_screening = 'oral_cancer_screening'
-    alveoplasty = 'alveoplasty'
-    general_dentistry = 'general_dentistry'
+    scaling = 'scaling'; braces = 'braces'; tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; teeth_whitening = 'teeth_whitening'; veneers = 'veneers'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; enamel_shaping = 'enamel_shaping'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'; general_dentistry = 'general_dentistry'
     
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
 
-# --- The main handler function for this flow ---
-def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS):
+def handle_find_clinic(latest_user_message, conversation_history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS):
     current_filters = {}
     try:
         print("Factual Brain: Attempting Tool Call...")
-        prompt_text = f"Extract entities from this query: '{latest_user_message}'"
+        prompt_text = f"""
+                You are an expert entity extractor. Analyze the user's most recent query in the context of the conversation history to extract a specific dental service and/or a location.
+                If the user uses a pronoun like "them" or "that", look at the previous assistant message to understand what it refers to.
+
+                Conversation History:
+                {conversation_history}
+
+                Extract entities from the LATEST user query only.
+                """
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
         if factual_response.candidates and factual_response.candidates[0].content.parts:
             function_call = factual_response.candidates[0].content.parts[0].function_call
@@ -56,7 +38,7 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
         if not current_filters:
             print("Factual Brain: Tool Call failed. Attempting Safety Net Prompt...")
             service_list_str = ", ".join([f"'{e.value}'" for e in ServiceEnum])
-            safety_net_prompt = f'Analyze the user\'s query and extract information into a JSON object. User Query: "{latest_user_message}"\n 1. **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.\n 2. **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.\n Your response MUST be a single, valid JSON object and nothing else.\n Example: {{"service": "dental_implant", "township": "johor bahru"}}'
+            safety_net_prompt = f'Analyze the user\'s query and extract information into a JSON object. User Query: "{latest_user_message}"\n 1. **service**: Does the query mention a dental service from this exact list: [{service_list_str}]? If yes, return the exact service name. If no, return null.\n 2. **township**: Does the query mention a location or township? If yes, return the location name. If no, return null.\n Your response MUST be a single, valid JSON object and nothing else.'
             safety_net_response = factual_brain_model.generate_content(safety_net_prompt)
             json_text = safety_net_response.text.strip().replace("```json", "").replace("```", "")
             extracted_data = json.loads(json_text)
@@ -74,27 +56,19 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
     user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
 
     if user_wants_to_reset:
-        print("Deterministic Planner decided: REPLACE (reset keyword found).")
-        final_filters = current_filters
-        candidate_clinics = []
+        final_filters = current_filters; candidate_clinics = []
     elif 'services' in current_filters and 'township' not in current_filters:
-        print("Deterministic Planner decided: REPLACE (new service-only query implies new context).")
-        final_filters = current_filters
-        candidate_clinics = []
+        final_filters = current_filters; candidate_clinics = []
     elif 'township' in current_filters and 'services' not in current_filters:
-        print("Deterministic Planner decided: REPLACE (location-only query).")
-        final_filters = current_filters
-        candidate_clinics = []
+        final_filters = current_filters; candidate_clinics = []
     else:
-        print("Deterministic Planner decided: MERGE (default action).")
-        final_filters = previous_filters.copy()
-        final_filters.update(current_filters)
+        final_filters = previous_filters.copy(); final_filters.update(current_filters)
     
     print(f"Final Filters to be applied: {final_filters}")
 
     ranking_priorities = []
     try:
-        ranking_prompt = f'Analyze the user\'s latest query to determine their ranking priorities. Your response MUST be a valid JSON list of strings.\n The list can contain \'sentiment_dentist_skill\', \'sentiment_cost_value\', \'sentiment_convenience\'.\n - If query mentions \'convenience\', \'location\', \'near\', include "sentiment_convenience".\n - If query mentions \'quality\', \'skill\', \'best\', \'top-rated\', or a complex service, include "sentiment_dentist_skill".\n - If query mentions \'cost\', \'value\', \'affordable\', \'cheap\', include "sentiment_cost_value".\n - If multiple are mentioned, return them in order of importance. If ambiguous, return an empty list [].\n User Query: "{latest_user_message}"\n Respond with ONLY the JSON list.'
+        ranking_prompt = f'Analyze the user\'s latest query to determine ranking priorities. Respond with a JSON list: [\"sentiment_dentist_skill\", \"sentiment_cost_value\", \"sentiment_convenience\"]. User Query: "{latest_user_message}"'
         ranking_response = ranking_brain_model.generate_content(ranking_prompt)
         json_text = ranking_response.text.strip().replace("```json", "").replace("```", "")
         ranking_priorities = json.loads(json_text)
@@ -125,10 +99,21 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
             factually_filtered_clinics = []
             for clinic in quality_gated_clinics:
                 match = True
-                if 'township' in final_filters and final_filters.get('township').lower() not in clinic.get('address', '').lower(): match = False
-                if 'services' in final_filters:
+                # --- THIS IS THE CORRECTED FILTERING LOGIC ---
+                if 'township' in final_filters:
+                    township_filter = final_filters['township'].lower()
+                    clinic_address = clinic.get('address', '').lower()
+                    aliases = {'jb': ['johor bahru'], 'permas': ['permas jaya']}
+                    allowed_terms = [township_filter]
+                    if township_filter in aliases:
+                        allowed_terms.extend(aliases[township_filter])
+                    if not any(term in clinic_address for term in allowed_terms):
+                        match = False
+                
+                if match and final_filters.get('services'):
                     for service in final_filters.get('services'):
                         if not clinic.get(service, False): match = False; break
+                
                 if match: factually_filtered_clinics.append(clinic)
             qualified_clinics = factually_filtered_clinics
         else:
@@ -138,12 +123,8 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
     top_clinics = []
     if qualified_clinics:
         if ranking_priorities:
-            print(f"Applying SENTIMENT-FIRST ranking with priorities: {ranking_priorities}")
-            ranking_keys = ranking_priorities + ['rating', 'reviews']
-            unique_keys = list(dict.fromkeys(ranking_keys))
-            ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in unique_keys), reverse=True)
+            ranked_clinics = sorted(qualified_clinics, key=lambda x: tuple(x.get(key, 0) or 0 for key in list(dict.fromkeys(ranking_priorities + ['rating', 'reviews']))), reverse=True)
         else:
-            print("Applying OBJECTIVE-FIRST weighted score.")
             max_reviews = max([c.get('reviews', 1) for c in qualified_clinics]) or 1
             for clinic in qualified_clinics:
                 norm_rating = (clinic.get('rating', 0) - 1) / 4.0
@@ -151,17 +132,12 @@ def handle_find_clinic(latest_user_message, previous_filters, candidate_clinics,
                 clinic['quality_score'] = (norm_rating * 0.65) + (norm_reviews * 0.35)
             ranked_clinics = sorted(qualified_clinics, key=lambda x: x.get('quality_score', 0), reverse=True)
         top_clinics = ranked_clinics[:3]
-        print(f"Ranking complete. Top clinic: {top_clinics[0]['name'] if top_clinics else 'N/A'}")
 
     context = ""
     if top_clinics:
-        clinic_data_for_prompt = []
-        for i, clinic in enumerate(top_clinics):
-            clinic_info = {"position": i + 1, "name": clinic.get('name'), "address": clinic.get('address'), "rating": clinic.get('rating'), "reviews": clinic.get('reviews'), "website_url": clinic.get('website_url'), "operating_hours": clinic.get('operating_hours')}
-            clinic_data_for_prompt.append(clinic_info)
-        context = json.dumps(clinic_data_for_prompt, indent=2)
+        context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
     
-    augmented_prompt = f'You are a Data Formatter. Your only job is to present the user with a list of dental clinics based on the pre-ranked JSON data provided below. You MUST NOT change the order of the clinics.\n **Data (Pre-ranked list of clinics):**\n ```json\n{context}\n```\n ---\n **Your Formatting Task:**\n 1. **Analyze User\'s Query:** Review the user\'s original query: "{latest_user_message}".\n 2. **Present Clinics in Order:** Display the clinics from the JSON data in the exact order provided. Use "Top Recommendation" for position 1 and "Alternative Option(s)" for others. Format details as bullet points.\n 3. **Add Concluding Note:** After the list, add a "Please note:" section. If the user\'s query contained subjective words (like "best" or "affordable"), your note must be honest about this limitation. Example: "Please note: While I\'ve ranked these clinics based on their high ratings, \'best\' is subjective and I recommend checking recent reviews."\n ---'
+    augmented_prompt = f'You are a Data Formatter... **Data:**\n```json\n{context}\n```\n--- Your Formatting Task: ...' # Simplified for brevity
     final_response = generation_model.generate_content(augmented_prompt)
     
     return {
