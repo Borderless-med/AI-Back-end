@@ -70,6 +70,7 @@ def handle_chat(query: UserQuery):
     if not query.history:
         return {"response": "Error: History is empty."}
     
+    # --- Centralized State Management ---
     latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
     candidate_clinics = query.candidate_pool or []
@@ -82,6 +83,7 @@ def handle_chat(query: UserQuery):
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
 
+    # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
     intent = ChatIntent.FIND_CLINIC
     try:
         gatekeeper_prompt = f"""
@@ -112,11 +114,14 @@ def handle_chat(query: UserQuery):
         print(f"Gatekeeper Exception: An exception occurred: {e}")
         intent = ChatIntent.FIND_CLINIC
 
+    # --- STAGE 2: THE ROUTER ---
     response_data = {}
 
     if intent == ChatIntent.FIND_CLINIC:
+        # --- THIS IS THE UPGRADED CALL WITH THE NEW CONTEXT-AWARE PROMPT ---
         response_data = handle_find_clinic(
             latest_user_message=latest_user_message,
+            conversation_history=conversation_history_for_prompt, # Pass the history
             previous_filters=previous_filters,
             candidate_clinics=candidate_clinics,
             factual_brain_model=factual_brain_model,
