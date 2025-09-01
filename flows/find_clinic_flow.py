@@ -63,7 +63,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             # --- FIX: Sanitize the service name to match the database column format ---
             sanitized_service = service.replace(' ', '_')
             db_query = db_query.eq(sanitized_service, True)
-   
+    
     # Handle the special 'jb' case by using our new database column
     township_filter = final_filters.get('township')
     if township_filter in ['jb', 'johor bahru']:
@@ -92,24 +92,44 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # Ranking Logic...
     top_clinics = []
     if qualified_clinics:
-        # (The ranking logic is complex and remains unchanged, so it is condensed here for clarity)
         # ... ranking happens here ...
-        top_clinics = qualified_clinics[:3] # Simplified for this example
+        top_clinics = qualified_clinics[:3]
 
-    context = ""
-    if top_clinics:
-        context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
-    
     if not top_clinics:
         # Provide a more helpful response when no clinics are found
         return {"response": "I'm sorry, I couldn't find any clinics that match your specific criteria. Would you like to try a different search?", "applied_filters": final_filters, "candidate_pool": [], "booking_context": {}}
 
-    augmented_prompt = f'You are a Data Formatter... **Data:**\n```json\n{context}\n```\n--- Your Formatting Task: ...'
-    final_response = generation_model.generate_content(augmented_prompt)
+    context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
     
+    # --- START OF THE ROBUST FIX ---
+    
+    augmented_prompt = f'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. Present the top 3 clinics clearly. Do not output raw JSON. **Data:**\n```json\n{context}\n```'
+    
+    response_text = ""
+    try:
+        # Attempt to get the beautiful, formatted response from the AI
+        ai_response = generation_model.generate_content(augmented_prompt)
+        response_text = ai_response.text
+        
+        # A final check to ensure the AI didn't return an empty or whitespace-only response
+        if not response_text or not response_text.strip():
+             raise ValueError("AI returned an empty response.")
+
+    except Exception as e:
+        # This is the "Safety Net". If the AI fails for ANY reason, this code will run.
+        print(f"CRITICAL FALLBACK: Data Formatter AI failed. Reason: {e}. Providing a manual fallback response.")
+        
+        # We will build a simple, clean, and user-friendly list manually.
+        fallback_list = []
+        for clinic in top_clinics:
+            fallback_list.append(f"- **{clinic.get('name')}** (Rating: {clinic.get('rating')}, Reviews: {clinic.get('reviews')})")
+        
+        response_text = "I found a few highly-rated clinics for you:\n" + "\n".join(fallback_list) + "\n\nWould you like to book an appointment at one of these locations?"
+
     return {
-        "response": final_response.text, 
+        "response": response_text, 
         "applied_filters": final_filters,
         "candidate_pool": candidate_clinics,
         "booking_context": {}
     }
+    # --- END OF THE ROBUST FIX ---
