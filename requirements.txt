@@ -11,7 +11,7 @@ email_validator==2.2.0
 fastapi==0.116.1
 fastapi-cli==0.0.8
 fastapi-cloud-cli==0.1.4
-google-generativeai
+google-generativeai==0.5.2
 gotrue==2.12.3
 grpcio==1.73.1
 grpcio-status==1.71.2
