@@ -22,11 +22,11 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-embedding_model = 'models/embedding-001'
-generation_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-001')
+factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-001')
+ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-001')
+embedding_model = 'models/embedding-001' # This model is already versioned, no change needed.
+generation_model = genai.GenerativeModel('gemini-1.5-flash-001')
 
 # --- Pydantic Data Models (Centralized) ---
 class ChatMessage(BaseModel):
