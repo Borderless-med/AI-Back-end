@@ -60,8 +60,10 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # Apply non-negotiable filters directly to the database query
     if 'services' in final_filters:
         for service in final_filters['services']:
-            db_query = db_query.eq(service, True)
-    
+            # --- FIX: Sanitize the service name to match the database column format ---
+            sanitized_service = service.replace(' ', '_')
+            db_query = db_query.eq(sanitized_service, True)
+   
     # Handle the special 'jb' case by using our new database column
     township_filter = final_filters.get('township')
     if township_filter in ['jb', 'johor bahru']:
