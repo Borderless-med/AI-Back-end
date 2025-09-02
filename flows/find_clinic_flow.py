@@ -96,8 +96,9 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         return {"response": "I'm sorry, I couldn't find any clinics that match your specific criteria. Would you like to try a different search?", "applied_filters": final_filters, "candidate_pool": [], "booking_context": {}}
 
     context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
-    
-    augmented_prompt = f'You are a Data Formatter... **Data:**\n```json\n{context}\n```\n--- Your Formatting Task: ...'
+ 
+    augmented_prompt = f'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. Present the top 3 clinics clearly. Do not output raw JSON. **Data:**\n```json\n{context}\n```'
+
     
     response_text = ""
     try:
