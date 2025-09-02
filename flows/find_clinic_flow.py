@@ -20,13 +20,21 @@ class UserIntent(BaseModel):
 def handle_find_clinic(latest_user_message, conversation_history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS):
     current_filters = {}
     try:
-        prompt_text = f"""
-        You are an expert entity extractor. Analyze the user's most recent query in the context of the conversation history to extract a specific dental service and/or a location.
+                prompt_text = f"""
+        You are an expert entity extractor. Your only job is to analyze the user's most recent query and call the `UserIntent` tool.
         If the user uses a pronoun like "them" or "that", look at the previous assistant message to understand what it refers to.
+        If you find a specific dental service and/or a location, extract them.
+        If no specific dental service or location is mentioned, call the tool with null values for both fields.
+        You MUST always call the `UserIntent` tool.
+
         Conversation History:
         {conversation_history}
-        Extract entities from the LATEST user query only.
+
+        Extract entities from the LATEST user query: "{latest_user_message}"
         """
+        # (Inside your handle_find_clinic function in find_clinic_flow.py)
+
+
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
         if factual_response.candidates and factual_response.candidates[0].content.parts:
             function_call = factual_response.candidates[0].content.parts[0].function_call

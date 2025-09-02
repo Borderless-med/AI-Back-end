@@ -87,20 +87,24 @@ def handle_chat(query: UserQuery):
     # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
     intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f'''
+               
+        gatekeeper_prompt = f"""
         You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
         **Decision Logic:**
-        - If the user is describing their dental needs or asking to find a clinic (e.g., "I need a filling," "find clinics for braces"), the intent is `find_clinic`.
+        - If the user is describing their dental needs, asking to find a clinic, or looking for specific types of clinics (e.g., "I need a filling," "find clinics for braces", "best clinics"), the intent is `find_clinic`.
         - If the user is explicitly asking to schedule, reserve a time, or make an appointment (e.g., "I want to book an appointment," "can I schedule a visit?"), the intent is `book_appointment`.
         - If the user is asking a general knowledge question about dentistry (e.g., "what is a root canal?", "do veneers hurt?"), the intent is `general_dental_question`.
-        - If the query is clearly not about dentistry (greetings, weather, directions, etc.), the intent is `out_of_scope`.
+        - If the query is a greeting, a simple test message, a thank you, or is clearly not about dentistry (e.g., "hello", "test", "how to get to...", "what is the weather"), the intent is `out_of_scope`.
 
         Conversation History:
         {conversation_history_for_prompt}
 
         Analyze the user's MOST RECENT message and call the `GatekeeperDecision` tool with your classification.
-        '''
+        """
+        # (Inside your @app.post("/chat") function in main.py)
+
+
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         
         part = gatekeeper_response.candidates[0].content.parts[0]
