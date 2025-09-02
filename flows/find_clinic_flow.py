@@ -20,7 +20,7 @@ class UserIntent(BaseModel):
 def handle_find_clinic(latest_user_message, conversation_history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS):
     current_filters = {}
     try:
-                prompt_text = f"""
+        prompt_text = f"""
         You are an expert entity extractor. Your only job is to analyze the user's most recent query and call the `UserIntent` tool.
         If the user uses a pronoun like "them" or "that", look at the previous assistant message to understand what it refers to.
         If you find a specific dental service and/or a location, extract them.
@@ -32,9 +32,6 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
 
         Extract entities from the LATEST user query: "{latest_user_message}"
         """
-        # (Inside your handle_find_clinic function in find_clinic_flow.py)
-
-
         factual_response = factual_brain_model.generate_content(prompt_text, tools=[UserIntent])
         if factual_response.candidates and factual_response.candidates[0].content.parts:
             function_call = factual_response.candidates[0].content.parts[0].function_call
@@ -109,25 +106,19 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
 
     context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
     
-    # --- START OF THE ROBUST FIX ---
-    
     augmented_prompt = f'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. Present the top 3 clinics clearly. Do not output raw JSON. **Data:**\n```json\n{context}\n```'
     
     response_text = ""
     try:
-        # Attempt to get the beautiful, formatted response from the AI
         ai_response = generation_model.generate_content(augmented_prompt)
         response_text = ai_response.text
         
-        # A final check to ensure the AI didn't return an empty or whitespace-only response
         if not response_text or not response_text.strip():
              raise ValueError("AI returned an empty response.")
 
     except Exception as e:
-        # This is the "Safety Net". If the AI fails for ANY reason, this code will run.
         print(f"CRITICAL FALLBACK: Data Formatter AI failed. Reason: {e}. Providing a manual fallback response.")
         
-        # We will build a simple, clean, and user-friendly list manually.
         fallback_list = []
         for clinic in top_clinics:
             fallback_list.append(f"- **{clinic.get('name')}** (Rating: {clinic.get('rating')}, Reviews: {clinic.get('reviews')})")
@@ -140,4 +131,3 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         "candidate_pool": candidate_clinics,
         "booking_context": {}
     }
-    # --- END OF THE ROBUST FIX ---
