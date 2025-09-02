@@ -67,6 +67,15 @@ def read_root():
 
 @app.post("/chat")
 def handle_chat(query: UserQuery):
+    # --- THIS IS A TEMPORARY TRACER BULLET ---
+    # This test code bypasses all AI and database logic to confirm which server is responding.
+    print("--- TRACER BULLET HIT! Request successfully reached the dev-v2 service. ---")
+    return {
+        "response": "Tracer bullet successful. You are connected to the new dev-v2 backend."
+    }
+    # --- THE ORIGINAL CODE IS TEMPORARILY DISABLED BELOW ---
+
+    """
     if not query.history:
         return {"response": "Error: History is empty."}
     
@@ -86,7 +95,7 @@ def handle_chat(query: UserQuery):
     # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
     intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f"""
+        gatekeeper_prompt = f'''
         You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
         **Decision Logic:**
@@ -99,7 +108,7 @@ def handle_chat(query: UserQuery):
         {conversation_history_for_prompt}
 
         Analyze the user's MOST RECENT message and call the `GatekeeperDecision` tool with your classification.
-        """
+        '''
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         
         part = gatekeeper_response.candidates[0].content.parts[0]
@@ -160,3 +169,4 @@ def handle_chat(query: UserQuery):
         response_data = {"response": "I'm sorry, I encountered an unexpected error."}
 
     return response_data
+    """
