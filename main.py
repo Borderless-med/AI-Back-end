@@ -67,15 +67,7 @@ def read_root():
 
 @app.post("/chat")
 def handle_chat(query: UserQuery):
-    # --- THIS IS A TEMPORARY TRACER BULLET ---
-    # This test code bypasses all AI and database logic to confirm which server is responding.
-    print("--- TRACER BULLET HIT! Request successfully reached the dev-v2 service. ---")
-    return {
-        "response": "Tracer bullet successful. You are connected to the new dev-v2 backend."
-    }
-    # --- THE ORIGINAL CODE IS TEMPORARILY DISABLED BELOW ---
-
-    """
+   
     if not query.history:
         return {"response": "Error: History is empty."}
     
@@ -169,4 +161,3 @@ def handle_chat(query: UserQuery):
         response_data = {"response": "I'm sorry, I encountered an unexpected error."}
 
     return response_data
-    """
