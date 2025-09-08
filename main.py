@@ -92,18 +92,19 @@ def handle_chat(query: UserQuery):
         You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
         **Decision Logic:**
-        - If the user is describing their dental needs, asking to find a clinic, or looking for specific types of clinics (e.g., "I need a filling," "find clinics for braces", "best clinics"), the intent is `find_clinic`.
-        - If the user is explicitly asking to schedule, reserve a time, or make an appointment (e.g., "I want to book an appointment," "can I schedule a visit?"), the intent is `book_appointment`.
-        - If the user is asking a general knowledge question about dentistry (e.g., "what is a root canal?", "do veneers hurt?"), the intent is `general_dental_question`.
-        - If the query is a greeting, a simple test message, a thank you, or is clearly not about dentistry (e.g., "hello", "test", "how to get to...", "what is the weather"), the intent is `out_of_scope`.
+        - `find_clinic`: User is asking for a clinic, describing a dental need, or asking for the "best" or a "good" clinic. EXAMPLES: "I need a filling," "find clinics for braces," "what are the best clinics in JB".
+        - `book_appointment`: User is explicitly asking to schedule, reserve a time, or make an appointment. EXAMPLES: "I want to book an appointment," "can I schedule a visit?".
+        - `general_dental_question`: User is asking a general knowledge question about dentistry. EXAMPLES: "what is a root canal?", "do veneers hurt?".
+        - `out_of_scope`: The query is a simple greeting, a test message, a thank you, small talk, or is clearly not about dentistry. EXAMPLES: "hello", "test", "how are you", "how to get to...", "what is the weather".
+
+        **CRITICAL INSTRUCTION:** Read the user's most recent message. Find the BEST match from the four intents above and call the `GatekeeperDecision` tool with that intent. THIS IS YOUR ONLY TASK. DO NOT FAIL.
 
         Conversation History:
         {conversation_history_for_prompt}
 
-        Analyze the user's MOST RECENT message and call the `GatekeeperDecision` tool with your classification.
+        User's MOST RECENT message is: "{latest_user_message}"
         """
         # (Inside your @app.post("/chat") function in main.py)
-
 
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         
