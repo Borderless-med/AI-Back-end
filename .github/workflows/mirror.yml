@@ -1,0 +1,21 @@
+name: Mirror to Borderless-med Back-end
+
+on:
+  push:
+    branches:
+      - main # IMPORTANT: Change this to 'master' if your main branch is called master
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Mirror Push
+        run: |
+          git remote add mirror git@github.com:Borderless-med/AI-Back-end.git
+          git push --mirror mirror
