@@ -24,7 +24,7 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('gemini-1.5-flash-001')
+gatekeeper_model = genai.GenerativeModel('gemini-1.5-pro-001')
 factual_brain_model = genai.GenerativeModel('gemini-1.5-flash-001')
 ranking_brain_model = genai.GenerativeModel('gemini-1.5-flash-001')
 embedding_model = 'models/embedding-001' # This model is already versioned, no change needed.
