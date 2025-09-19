@@ -62,36 +62,36 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     db_query = supabase.table('clinics_data').select('*')
 
     if 'services' in final_filters:
-            # Mapping for common service terms to correct columns
-            service_column_map = {
-                'scaling': 'general_dentistry',
-                'cleaning': 'general_dentistry',
-                'teeth cleaning': 'general_dentistry',
-                'polishing': 'general_dentistry',
-                'basic cleaning': 'general_dentistry',
-                'checkup': 'general_dentistry',
-                'veneers': ['composite_veneers', 'porcelain_veneers'],
-                    'dental exam': 'general_dentistry',
-                    'oral checkup': 'general_dentistry',
-                    'dental x-ray': 'general_dentistry',
-                    'fluoride treatment': 'general_dentistry',
-                    'dental sealant': 'general_dentistry',
-                    'pediatric dentistry': 'general_dentistry',
-                    'oral hygiene instruction': 'general_dentistry',
-                    'preventive care': 'general_dentistry',
-                    'tooth extraction': 'general_dentistry',
-                    'emergency dental care': 'general_dentistry',
-                    'space maintainer': 'general_dentistry',
-                    'mouthguard': 'general_dentistry',
-                    'dental consultation': 'general_dentistry',
-                    'dietary counseling': 'general_dentistry',
-                    'desensitization treatment': 'general_dentistry',
-                    'tooth remineralization': 'general_dentistry',
-                    'dental cleaning for children': 'general_dentistry',
-                    'halitosis treatment': 'general_dentistry',
-                    'tooth eruption monitoring': 'general_dentistry',
-                    'dental plaque removal': 'general_dentistry',
-            }
+        # Mapping for common service terms to correct columns
+        service_column_map = {
+            'scaling': 'general_dentistry',
+            'cleaning': 'general_dentistry',
+            'teeth cleaning': 'general_dentistry',
+            'polishing': 'general_dentistry',
+            'basic cleaning': 'general_dentistry',
+            'checkup': 'general_dentistry',
+            'veneers': ['composite_veneers', 'porcelain_veneers'],
+            'dental exam': 'general_dentistry',
+            'oral checkup': 'general_dentistry',
+            'dental x-ray': 'general_dentistry',
+            'fluoride treatment': 'general_dentistry',
+            'dental sealant': 'general_dentistry',
+            'pediatric dentistry': 'general_dentistry',
+            'oral hygiene instruction': 'general_dentistry',
+            'preventive care': 'general_dentistry',
+            'tooth extraction': 'general_dentistry',
+            'emergency dental care': 'general_dentistry',
+            'space maintainer': 'general_dentistry',
+            'mouthguard': 'general_dentistry',
+            'dental consultation': 'general_dentistry',
+            'dietary counseling': 'general_dentistry',
+            'desensitization treatment': 'general_dentistry',
+            'tooth remineralization': 'general_dentistry',
+            'dental cleaning for children': 'general_dentistry',
+            'halitosis treatment': 'general_dentistry',
+            'tooth eruption monitoring': 'general_dentistry',
+            'dental plaque removal': 'general_dentistry',
+        }
         for service in final_filters['services']:
 
             # --- FIX: Sanitize the service name to match the database column format ---
