@@ -201,10 +201,25 @@ def handle_chat(query: UserQuery):
     else:
         response_data = {"response": "I'm sorry, I encountered an unexpected error."}
 
+   
+    # --- Guarantee response_data is a dict and add session_id ---
+    if not isinstance(response_data, dict):
+        response_data = {"response": str(response_data)}
+
     # --- Update session context after processing ---
     update_success = update_session(session_id, context)
     if not update_success:
         logging.error(f"Failed to update session {session_id}")
 
     response_data["session_id"] = session_id
-    return response_data
+    
+    # ==================== ADD THIS BLOCK ====================
+    # This is the "Ground Truth" log.
+    # It will print the exact object and its type to your Render logs.
+    print(f"--- DEBUGGING SESSION ID ---")
+    print(f"FINAL RESPONSE OBJECT BEING RETURNED: {response_data}")
+    print(f"TYPE OF RESPONSE OBJECT: {type(response_data)}")
+    print(f"--- END DEBUGGING ---")
+    # =======================================================
+    
+    return response_data 
