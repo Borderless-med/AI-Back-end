@@ -129,7 +129,16 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if qualified_clinics:
         top_clinics = qualified_clinics[:3]
 
+
+
+# --- PASTE THIS NEW BLOCK IN ITS PLACE ---
+
     if not top_clinics:
+<<<<<<< HEAD
+=======
+        # Provide a more helpful response when no clinics are found
+        print("DEBUG: No top clinics found, returning early.")
+>>>>>>> 0eefbd3 (Fix response structure and session management; only return top clinics)
         return {"response": "I'm sorry, I couldn't find any clinics that match your specific criteria. Would you like to try a different search?", "applied_filters": final_filters, "candidate_pool": [], "booking_context": {}}
 
     context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
@@ -154,9 +163,22 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         
         response_text = "I found a few highly-rated clinics for you:\n" + "\n".join(fallback_list) + "\n\nWould you like to book an appointment at one of these locations?"
 
-    return {
+    # --- THIS IS THE FIX: Clean the vectors and add a debug print ---
+    cleaned_candidate_pool = []
+    for clinic in top_clinics:
+        clean_clinic = clinic.copy()
+        clean_clinic.pop('embedding', None)
+        clean_clinic.pop('embedding_arr', None)
+        cleaned_candidate_pool.append(clean_clinic)
+
+    final_response_data = {
         "response": response_text, 
         "applied_filters": final_filters,
-        "candidate_pool": candidate_clinics,
+        "candidate_pool": cleaned_candidate_pool, # Use the new, clean list
         "booking_context": {}
     }
+
+    # This line is our proof. It will print to your server log.
+    print(f"DEBUG: Preparing to return {len(cleaned_candidate_pool)} clinics in the candidate pool.")
+
+    return final_response_data
