@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
+import logging
 
 # --- Import all four of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -40,6 +41,7 @@ class UserQuery(BaseModel):
     applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
     candidate_pool: Optional[List[dict]] = Field(None, description="The full list of candidates from the initial semantic search.")
     booking_context: Optional[dict] = Field(None, description="Context for an ongoing booking process.")
+    session_id: Optional[str] = Field(None, description="Session ID for persistent context.")
 
 # --- Gatekeeper Intent Definitions ---
 class ChatIntent(str, Enum):
@@ -52,6 +54,35 @@ class GatekeeperDecision(BaseModel):
     intent: ChatIntent
 
 # --- FastAPI App ---
+
+# --- Session Management Helpers ---
+def get_session(session_id: str) -> Optional[dict]:
+    try:
+        response = supabase.table("sessions").select("*").eq("session_id", session_id).single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        logging.error(f"Error fetching session {session_id}: {e}")
+        return None
+
+def create_session(initial_context: dict = None) -> Optional[str]:
+    from uuid import uuid4
+    session_id = str(uuid4())
+    context = initial_context or {}
+    try:
+        supabase.table("sessions").insert({"session_id": session_id, "context": context}).execute()
+        return session_id
+    except Exception as e:
+        logging.error(f"Error creating session: {e}")
+        return None
+
+def update_session(session_id: str, context: dict) -> bool:
+    try:
+        supabase.table("sessions").update({"context": context}).eq("session_id", session_id).execute()
+        return True
+    except Exception as e:
+        logging.error(f"Error updating session {session_id}: {e}")
+        return False
+
 app = FastAPI()
 
 RESET_KEYWORDS = [
@@ -69,16 +100,29 @@ def read_root():
 
 @app.post("/chat")
 def handle_chat(query: UserQuery):
-   
+    # --- Session Management ---
+    session_id = query.session_id
+    context = {}
+    if session_id:
+        session = get_session(session_id)
+        if session:
+            context = session.get("context", {})
+        else:
+            session_id = create_session()
+            context = {}
+    else:
+        session_id = create_session()
+        context = {}
+
     if not query.history:
-        return {"response": "Error: History is empty."}
-    
+        return {"response": "Error: History is empty.", "session_id": session_id}
+
     # --- Centralized State Management ---
     latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
     candidate_clinics = query.candidate_pool or []
     booking_context = query.booking_context or {}
-    
+
     conversation_history_for_prompt = ""
     for msg in query.history:
         conversation_history_for_prompt += f"{msg.role}: {msg.content}\n"
@@ -89,7 +133,6 @@ def handle_chat(query: UserQuery):
     # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
     intent = ChatIntent.FIND_CLINIC
     try:
-               
         gatekeeper_prompt = f"""
         You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
 
@@ -106,10 +149,7 @@ def handle_chat(query: UserQuery):
 
         User's MOST RECENT message is: "{latest_user_message}"
         """
-        # (Inside your @app.post("/chat") function in main.py)
-
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
-        
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
@@ -117,7 +157,6 @@ def handle_chat(query: UserQuery):
         else:
             print(f"Gatekeeper Error: AI did not return a valid function call. Raw response: {gatekeeper_response.text}")
             intent = ChatIntent.FIND_CLINIC
-
     except Exception as e:
         print(f"Gatekeeper Exception: An exception occurred: {e}")
         intent = ChatIntent.FIND_CLINIC
@@ -126,7 +165,6 @@ def handle_chat(query: UserQuery):
     response_data = {}
 
     if intent == ChatIntent.FIND_CLINIC:
-        # --- THIS IS THE UPGRADED CALL WITH THE NEW CONTEXT-AWARE PROMPT ---
         response_data = handle_find_clinic(
             latest_user_message=latest_user_message,
             conversation_history=conversation_history_for_prompt, # Pass the history
@@ -139,7 +177,6 @@ def handle_chat(query: UserQuery):
             supabase=supabase,
             RESET_KEYWORDS=RESET_KEYWORDS
         )
-    
     elif intent == ChatIntent.BOOK_APPOINTMENT:
         response_data = handle_booking_flow(
             latest_user_message=latest_user_message,
@@ -148,7 +185,6 @@ def handle_chat(query: UserQuery):
             candidate_clinics=candidate_clinics,
             factual_brain_model=factual_brain_model
         )
-
     elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
         response_data = handle_qna(
             latest_user_message=latest_user_message,
@@ -157,14 +193,18 @@ def handle_chat(query: UserQuery):
         response_data["applied_filters"] = previous_filters
         response_data["candidate_pool"] = candidate_clinics
         response_data["booking_context"] = booking_context
-
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
         response_data["applied_filters"] = previous_filters
         response_data["candidate_pool"] = candidate_clinics
         response_data["booking_context"] = booking_context
-
     else:
         response_data = {"response": "I'm sorry, I encountered an unexpected error."}
 
+    # --- Update session context after processing ---
+    update_success = update_session(session_id, context)
+    if not update_success:
+        logging.error(f"Failed to update session {session_id}")
+
+    response_data["session_id"] = session_id
     return response_data
