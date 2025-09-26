@@ -26,7 +26,7 @@ supabase_key = os.getenv("SUPABASE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('models/gemini-1.5-pro')
+gatekeeper_model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
 factual_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
 ranking_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
 embedding_model = 'models/embedding-001'
