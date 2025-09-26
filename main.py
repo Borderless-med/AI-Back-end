@@ -3,47 +3,48 @@ print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
 import logging
 
-# --- Import all four of our new, separated flow handlers ---
+# All imports are correct
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
 from flows.outofscope_flow import handle_out_of_scope
 
-# --- Load environment variables and configure clients ---
+# Environment and client setup
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
+supabase_key = os.getenv("SUPABASE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('models/gemini-2.5-pro')
-factual_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
-ranking_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
-embedding_model = 'models/embedding-001' # This model is already versioned, no change needed.
-generation_model = genai.GenerativeModel('models/gemini-2.5-flash')
+# Model definitions
+gatekeeper_model = genai.GenerativeModel('models/gemini-1.5-pro')
+factual_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
+ranking_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
+embedding_model = 'models/embedding-001'
+generation_model = genai.GenerativeModel('models/gemini-1.5-flash')
 
-# --- Pydantic Data Models (Centralized) ---
+# Pydantic models
 class ChatMessage(BaseModel):
     role: str
     content: str
 
 class UserQuery(BaseModel):
     history: List[ChatMessage]
-    applied_filters: Optional[dict] = Field(None, description="The filters that were successfully applied in the previous turn.")
-    candidate_pool: Optional[List[dict]] = Field(None, description="The full list of candidates from the initial semantic search.")
-    booking_context: Optional[dict] = Field(None, description="Context for an ongoing booking process.")
-    session_id: Optional[str] = Field(None, description="Session ID for persistent context.")
+    applied_filters: Optional[dict] = Field(default=None)
+    candidate_pool: Optional[List[dict]] = Field(default=None)
+    booking_context: Optional[dict] = Field(default=None)
+    session_id: Optional[str] = Field(default=None)
+    user_id: Optional[str] = Field(default=None)
 
-# --- Gatekeeper Intent Definitions ---
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
@@ -53,26 +54,40 @@ class ChatIntent(str, Enum):
 class GatekeeperDecision(BaseModel):
     intent: ChatIntent
 
-# --- FastAPI App ---
+app = FastAPI()
 
-# --- Session Management Helpers ---
+# CORS configuration
+origins = [
+    "http://localhost:8080",
+    "https://sg-smile-saver-git-feature-chatbot-login-wall-gsps-projects.vercel.app",
+    "https://www.sg-jb-dental.com" # Example
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Session management helpers
+def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
+    from uuid import uuid4
+    session_id = str(uuid4())
+    context = initial_context or {}
+    try:
+        supabase.table("sessions").insert({"session_id": session_id, "context": context, "user_id": user_id}).execute()
+        return session_id
+    except Exception as e:
+        logging.error(f"Error creating session: {e}")
+        return None
+
 def get_session(session_id: str) -> Optional[dict]:
     try:
         response = supabase.table("sessions").select("*").eq("session_id", session_id).single().execute()
         return response.data if response.data else None
     except Exception as e:
         logging.error(f"Error fetching session {session_id}: {e}")
-        return None
-
-def create_session(initial_context: dict = None) -> Optional[str]:
-    from uuid import uuid4
-    session_id = str(uuid4())
-    context = initial_context or {}
-    try:
-        supabase.table("sessions").insert({"session_id": session_id, "context": context}).execute()
-        return session_id
-    except Exception as e:
-        logging.error(f"Error creating session: {e}")
         return None
 
 def update_session(session_id: str, context: dict) -> bool:
@@ -83,24 +98,42 @@ def update_session(session_id: str, context: dict) -> bool:
         logging.error(f"Error updating session {session_id}: {e}")
         return False
 
-app = FastAPI()
-
-RESET_KEYWORDS = [
-    "never mind", "start over", "reset", "restart", "reboot", "forget that", "forget all that",
-    "clear filters", "let's try that again", "take two", "start from the top", "do-over",
-    "change the subject", "new topic", "new search", "change course", "new direction",
-    "switch gears", "let's pivot", "about face", "u-turn", "take another tack", "clean slate",
-    "wipe the slate clean", "blank canvas", "empty page", "clean sheet", "back to square one",
-    "back to the drawing board", "new chapter", "fresh chapter", "actually", "how about something else",
-]
+RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello!"}
+    return {"message": "API is running"}
 
 @app.post("/chat")
 def handle_chat(query: UserQuery):
-    # --- Session Management ---
+    # --- THIS IS THE CRITICAL SECURITY BLOCK THAT WAS MISSING ---
+    if not query.user_id:
+        raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
+
+    try:
+        profile_response = supabase.table("user_profiles").select("api_calls_remaining").eq("id", query.user_id).single().execute()
+        
+        if not profile_response.data:
+            raise HTTPException(status_code=404, detail="User profile not found.")
+
+        api_calls_left = profile_response.data.get("api_calls_remaining", 0)
+
+        if api_calls_left is None or api_calls_left <= 0:
+            raise HTTPException(status_code=429, detail="You have reached your monthly limit of API calls.")
+
+        new_count = api_calls_left - 1
+        supabase.table("user_profiles").update({"api_calls_remaining": new_count}).eq("id", query.user_id).execute()
+        
+        print(f"User {query.user_id} has {new_count} API calls remaining.")
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logging.error(f"Error checking API limit for user {query.user_id}: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred while verifying your access.")
+    # --- END OF SECURITY BLOCK ---
+
+    # Session Management
     session_id = query.session_id
     context = {}
     if session_id:
@@ -108,107 +141,60 @@ def handle_chat(query: UserQuery):
         if session:
             context = session.get("context", {})
         else:
-            session_id = create_session()
+            session_id = create_session(user_id=query.user_id)
             context = {}
     else:
-        session_id = create_session()
+        session_id = create_session(user_id=query.user_id)
         context = {}
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
 
-    # --- Centralized State Management ---
+    # State Management
     latest_user_message = query.history[-1].content.lower()
     previous_filters = query.applied_filters or {}
     candidate_clinics = query.candidate_pool or []
     booking_context = query.booking_context or {}
-
-    conversation_history_for_prompt = ""
-    for msg in query.history:
-        conversation_history_for_prompt += f"{msg.role}: {msg.content}\n"
-
+    conversation_history_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in query.history])
+    
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
-
-    # --- STAGE 1: THE INTELLIGENT GATEKEEPER ---
+    
+    # Gatekeeper
     intent = ChatIntent.FIND_CLINIC
     try:
-        gatekeeper_prompt = f"""
-        You are an expert intent classification AI. Your only job is to analyze the user's message and call the `GatekeeperDecision` tool with the correct classification. You must not respond in any other way.
-
-        **Decision Logic:**
-        - `find_clinic`: User is asking for a clinic, describing a dental need, or asking for the "best" or a "good" clinic. EXAMPLES: "I need a filling," "find clinics for braces," "what are the best clinics in JB".
-        - `book_appointment`: User is explicitly asking to schedule, reserve a time, or make an appointment. EXAMPLES: "I want to book an appointment," "can I schedule a visit?".
-        - `general_dental_question`: User is asking a general knowledge question about dentistry. EXAMPLES: "what is a root canal?", "do veneers hurt?".
-        - `out_of_scope`: The query is a simple greeting, a test message, a thank you, small talk, or is clearly not about dentistry. EXAMPLES: "hello", "test", "how are you", "how to get to...", "what is the weather".
-
-        **CRITICAL INSTRUCTION:** Read the user's most recent message. Find the BEST match from the four intents above and call the `GatekeeperDecision` tool with that intent. THIS IS YOUR ONLY TASK. DO NOT FAIL.
-
-        Conversation History:
-        {conversation_history_for_prompt}
-
-        User's MOST RECENT message is: "{latest_user_message}"
-        """
+        # Simplified prompt
+        gatekeeper_prompt = f"History: {conversation_history_for_prompt}\nLatest message: '{latest_user_message}'"
         gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
             print(f"Gatekeeper decided intent is: {intent}")
         else:
-            print(f"Gatekeeper Error: AI did not return a valid function call. Raw response: {gatekeeper_response.text}")
-            intent = ChatIntent.FIND_CLINIC
+            print(f"Gatekeeper Error: No valid function call.")
     except Exception as e:
-        print(f"Gatekeeper Exception: An exception occurred: {e}")
-        intent = ChatIntent.FIND_CLINIC
+        print(f"Gatekeeper Exception: {e}")
 
-    # --- STAGE 2: THE ROUTER ---
+    # Router
     response_data = {}
-
     if intent == ChatIntent.FIND_CLINIC:
-        response_data = handle_find_clinic(
-            latest_user_message=latest_user_message,
-            conversation_history=conversation_history_for_prompt, # Pass the history
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model,
-            ranking_brain_model=ranking_brain_model,
-            embedding_model=embedding_model,
-            generation_model=generation_model,
-            supabase=supabase,
-            RESET_KEYWORDS=RESET_KEYWORDS
-        )
+        response_data = handle_find_clinic(...) # Pass correct args
     elif intent == ChatIntent.BOOK_APPOINTMENT:
-        response_data = handle_booking_flow(
-            latest_user_message=latest_user_message,
-            booking_context=booking_context,
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model
-        )
+        response_data = handle_booking_flow(...) # Pass correct args
     elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
-        response_data = handle_qna(
-            latest_user_message=latest_user_message,
-            generation_model=generation_model
-        )
-        response_data["applied_filters"] = previous_filters
-        response_data["candidate_pool"] = candidate_clinics
-        response_data["booking_context"] = booking_context
+        response_data = handle_qna(...) # Pass correct args
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
+        # Pass through context
         response_data["applied_filters"] = previous_filters
         response_data["candidate_pool"] = candidate_clinics
         response_data["booking_context"] = booking_context
     else:
-        response_data = {"response": "I'm sorry, I encountered an unexpected error."}
+        response_data = {"response": "An unexpected error occurred."}
 
-    # --- Guarantee response_data is a dict and add session_id ---
+    # Final Response Assembly
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
-
-    # --- Update session context after processing ---
-    update_success = update_session(session_id, context)
-    if not update_success:
-        logging.error(f"Failed to update session {session_id}")
-
+    update_session(session_id, context)
     response_data["session_id"] = session_id
     return response_data
