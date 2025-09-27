@@ -2,7 +2,7 @@ import json
 import string
 import google.generativeai as genai
 import numpy as np
-from numpy.linalg import norm
+from numpy.linalg importOthin norm
 from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 from enum import Enum
