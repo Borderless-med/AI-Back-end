@@ -26,11 +26,18 @@ supabase_key = os.getenv("SUPABASE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---
-gatekeeper_model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
-factual_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
-ranking_brain_model = genai.GenerativeModel('models/gemini-1.5-flash')
-embedding_model = 'models/embedding-001'
-generation_model = genai.GenerativeModel('models/gemini-1.5-flash')
+# Use the most powerful and reliable model for the critical, multi-class Gatekeeper task.
+gatekeeper_model = genai.GenerativeModel('gemini-pro-latest')
+
+# Use the fast and cheap Flash model for the subsequent, simpler tasks.
+factual_brain_model = genai.GenerativeModel('gemini-flash-latest')
+ranking_brain_model = genai.GenerativeModel('gemini-flash-latest')
+
+# The embedding model name is correct.
+embedding_model = 'models/embedding-001' 
+
+# Use the Flash model for the final, simple text generation.
+generation_model = genai.GenerativeModel('gemini-flash-latest')
 
 # --- Pydantic Data Models (Centralized) ---
 class ChatMessage(BaseModel):
