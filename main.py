@@ -171,8 +171,36 @@ def handle_chat(query: UserQuery):
     try:
         # A simpler prompt for better reliability
         gatekeeper_prompt = f"""
-        Analyze the most recent user message and classify the user's intent.
-        
+        You are a highly intelligent and strict API routing assistant for a dental chatbot. 
+        Your ONLY job is to analyze the user's most recent message and classify its intent into one of four categories.
+
+        You MUST use the 'GatekeeperDecision' tool to provide your answer.
+
+        Here are the definitions of the four intents:
+        1.  'find_clinic': The user is asking to find, locate, or get recommendations for a dental clinic. This includes asking for a list, asking for the "best" clinic, or asking for clinics in a specific location.
+        2.  'book_appointment': The user is explicitly asking to book, schedule, or make an appointment. This often follows a 'find_clinic' request.
+        3.  'general_dental_question': The user is asking a general question about a dental procedure, concept, or pricing (e.g., "what is a root canal?", "how much are veneers?").
+        4.  'out_of_scope': The user is having a casual conversation, greeting the chatbot, asking it to remember something, or asking a question completely unrelated to dentistry.
+
+        --- EXAMPLES ---
+        User Message: "Find me the best clinic for dental crown in JB"
+        Intent: find_clinic
+
+        User Message: "Okay, book me an appointment at Mount Austin Dental Hub"
+        Intent: book_appointment
+
+        User Message: "what is the price of teeth whitening?"
+        Intent: general_dental_question
+
+        User Message: "hello, are you still there"
+        Intent: out_of_scope
+
+        User Message: "do you remember what we talked about?"
+        Intent: out_of_scope
+        ---
+
+        Analyze the following conversation and determine the intent of the VERY LAST user message.
+
         Conversation History:
         {conversation_history_for_prompt}
 
