@@ -1,9 +1,10 @@
 import json
+import re
 from urllib.parse import urlencode
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 
-# --- Pydantic Models required for this flow ---
+# --- Pydantic Models (no changes needed here) ---
 class BookingIntent(BaseModel):
     clinic_name: str = Field(..., description="The name of the dental clinic the user wants to book.")
 
@@ -17,7 +18,7 @@ class Confirmation(BaseModel):
     corrected_treatment: Optional[str] = Field(None, description="If the user wants a different treatment, extract the new treatment name.")
     corrected_clinic: Optional[str] = Field(None, description="If the user wants to book at a different clinic, extract the new clinic name.")
 
-# --- Helper function for capturing user details ---
+# --- Helper function for capturing user details (no changes needed here) ---
 def capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
     try:
         extraction_prompt = f"""
@@ -33,7 +34,8 @@ def capture_user_info(latest_user_message, booking_context, previous_filters, ca
             function_call = user_info_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 user_args = function_call.args
-                base_url = "https://sg-jb-dental.lovable.app/book-now"
+                # --- NOTE: You may want to update this to your production URL ---
+                base_url = "https://www.sg-jb-dental.com/book-now" 
                 clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
                 params = {
                     'name': user_args.get('patient_name'), 'email': user_args.get('email_address'),
@@ -49,10 +51,18 @@ def capture_user_info(latest_user_message, booking_context, previous_filters, ca
         print(f"Booking Info Capture Exception: {e}")
         return {"response": "I'm sorry, I had trouble capturing those details. Please try again.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
 
-# --- The main handler function for this flow ---
+# --- THIS IS THE NEW, SMARTER handle_booking_flow FUNCTION ---
 def handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
+    
+    # --- STAGE 3: CAPTURING USER INFO ---
+    if booking_context.get("status") == "gathering_info":
+        print("In Booking Mode: Capturing user info...")
+        return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
+
+    # --- STAGE 2: CONFIRMING DETAILS ---
     if booking_context.get("status") == "confirming_details":
         try:
+            # Check if user is trying to provide info directly instead of confirming
             pre_check_prompt = f'You are a JSON validation expert. Your only job is to determine if the user\'s message contains personal contact information. You MUST respond with a single, valid JSON object: {{"has_info": boolean}}.\nExamples:\n- User Message: "My name is John" -> Your Response: {{"has_info": true}}\n- User Message: "yes that is correct" -> Your Response: {{"has_info": false}}\nAnalyze this message: "{latest_user_message}"'
             user_info_check_response = factual_brain_model.generate_content(pre_check_prompt)
             check_result = json.loads(user_info_check_response.text.strip().replace("```json", "").replace("```", ""))
@@ -74,6 +84,7 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
                     response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
                     return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
                 else:
+                    # Handle corrections or starting over
                     if confirm_args.get("corrected_treatment") or confirm_args.get("corrected_clinic"):
                         if confirm_args.get("corrected_treatment"): booking_context["treatment"] = confirm_args.get("corrected_treatment")
                         if confirm_args.get("corrected_clinic"): booking_context["clinic_name"] = confirm_args.get("corrected_clinic")
@@ -85,25 +96,41 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         except Exception as e:
             print(f"Booking Confirmation Error: {e}")
             return {"response": "Sorry, I had a little trouble understanding. Please confirm with a 'yes' or 'no', or let me know what you'd like to change.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
-    
-    elif booking_context.get("status") == "gathering_info":
-        print("In Booking Mode: Capturing user info...")
-        return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
+        
+    # --- STAGE 1: IDENTIFYING THE CLINIC ---
+    print("Starting Booking Mode...")
+    clinic_name = None
 
-    else:
-        print("Starting Booking Mode...")
+    # --- NEW LOGIC: Check for positional references first ---
+    if candidate_clinics and len(candidate_clinics) > 0:
+        pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
+        for word, index in pos_map.items():
+            if re.search(r'\b' + word + r'\b', latest_user_message):
+                try:
+                    clinic_name = candidate_clinics[index]['name']
+                    print(f"Found positional reference '{word}'. Selected clinic: {clinic_name}")
+                    break
+                except IndexError:
+                    print(f"Positional reference '{word}' found, but index is out of bounds for candidate pool.")
+                    pass
+    
+    # --- FALLBACK LOGIC: If no positional reference was found, use the AI ---
+    if not clinic_name:
+        print("No positional reference found. Using AI to extract clinic name.")
         try:
             booking_intent_response = factual_brain_model.generate_content(f"Extract the name of the dental clinic from the user's message. Message: '{latest_user_message}'", tools=[BookingIntent])
             function_call = booking_intent_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args and function_call.args.get('clinic_name'):
                 clinic_name = function_call.args.get('clinic_name')
-                treatment = (previous_filters.get('services') or ["a consultation"])[0]
-                new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment}
-                response_text = f"Great! I can help you get started with booking. Just to confirm, are you looking to book an appointment for **{treatment}** at **{clinic_name}**?"
-                return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": new_booking_context}
-            else:
-                print("Booking Intent Extraction Failed: No clinic name found.")
-                return {"response": "I can help with booking an appointment. Please let me know the name of the clinic you're interested in.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
         except Exception as e:
             print(f"Booking Intent Extraction Error: {e}")
-            return {"response": "I can help with that. Which clinic would you like to book?", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
+
+    # --- FINAL STEP: If we have a clinic name, proceed to confirmation ---
+    if clinic_name:
+        treatment = (previous_filters.get('services') or ["a consultation"])[0]
+        new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment}
+        response_text = f"Great! I can help you get started with booking. Just to confirm, are you looking to book an appointment for **{treatment}** at **{clinic_name}**?"
+        return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": new_booking_context}
+    else:
+        print("Booking Intent Extraction Failed: No clinic name found.")
+        return {"response": "I can help with booking an appointment. Please let me know the name of the clinic you're interested in.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
