@@ -52,6 +52,11 @@ class UserQuery(BaseModel):
     session_id: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
 
+# --- NEW: Pydantic model for the session restore endpoint ---
+class SessionRestoreQuery(BaseModel):
+    session_id: str
+    user_id: str
+
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
@@ -111,6 +116,23 @@ RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
 def read_root():
     return {"message": "API is running"}
 
+# --- NEW: Endpoint to restore session context ---
+@app.post("/restore_session")
+def restore_session(query: SessionRestoreQuery):
+    print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
+    try:
+        session = get_session(query.session_id)
+        # SECURITY CHECK: Ensure the user owns this session
+        if session and session.get("user_id") == query.user_id:
+            print("Session found and user verified. Returning context.")
+            return {"success": True, "context": session.get("context", {})}
+        else:
+            print("Session not found or user mismatch.")
+            raise HTTPException(status_code=404, detail="Session not found or access denied.")
+    except Exception as e:
+        logging.error(f"Error restoring session {query.session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to restore session.")
+
 @app.post("/chat")
 def handle_chat(query: UserQuery):
     # --- "LOGIN WALL" AND API LIMITER ---
@@ -169,7 +191,6 @@ def handle_chat(query: UserQuery):
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     try:
-        # A simpler prompt for better reliability
         gatekeeper_prompt = f"""
         You are a highly intelligent and strict API routing assistant for a dental chatbot. 
         Your ONLY job is to analyze the user's most recent message and classify its intent into one of four categories.
@@ -255,10 +276,17 @@ def handle_chat(query: UserQuery):
     response_data["booking_context"] = response_data.get("booking_context", booking_context)
 
     # --- Final Response Assembly ---
+    # CRITICAL FIX: The context we save must be the NEW context from the response_data
+    new_context_to_save = {
+        "applied_filters": response_data.get("applied_filters"),
+        "candidate_pool": response_data.get("candidate_pool"),
+        "booking_context": response_data.get("booking_context"),
+    }
+    
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
         
-    update_session(session_id, context)
+    update_session(session_id, new_context_to_save) # Use the new context
     response_data["session_id"] = session_id
     
     return response_data
