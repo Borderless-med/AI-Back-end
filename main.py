@@ -128,11 +128,10 @@ def handle_chat(query: UserQuery):
         if api_calls_left <= 0:
             raise HTTPException(status_code=429, detail="You have reached your monthly limit of API calls.")
 
-        # Step 3: If checks pass, decrement the counter
-        new_count = api_calls_left - 1
-        supabase.table("user_profiles").update({"api_calls_remaining": new_count}).eq("id", query.user_id).execute()
-        
-        print(f"User {query.user_id} has {new_count} API calls remaining.")
+        # Step 3: If checks pass, call the database function to decrement the counter
+        supabase.rpc('decrement_api_calls', {'user_id_input': query.user_id}).execute()
+
+        print(f"User {query.user_id} has {api_calls_left - 1} API calls remaining.")
 
     except HTTPException as http_exc:
         raise http_exc
