@@ -72,11 +72,11 @@ app = FastAPI()
 origins = [
     "http://localhost:8080", # For your local development
     "https://sg-smile-saver-git-feature-chatbot-login-wall-gsps-projects.vercel.app", # An old preview URL
-    "https://sg-smile-saver-git-main-gsps-projects-5403164b.vercel.app", # The exact URL from the CORS error
-    "https://sg-smile-saver.vercel.app", # Your likely final, clean production URL
+    "https://sg-smile-saver-git-main-gsps-projects-5403164b.vercel.app", # An old production URL
+    "https://sg-smile-saver-5rouwfubi-gsps-projects-5403164b.vercel.app", # The NEW URL from the error
+    "https://sg-smile-saver.vercel.app", # Your clean production URL
     "https://www.sg-jb-dental.com" # Your final custom domain
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
