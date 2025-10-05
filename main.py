@@ -66,8 +66,7 @@ class ChatIntent(str, Enum):
 class GatekeeperDecision(BaseModel):
     intent: ChatIntent
 
-app = FastAPI()
-
+app = FastAPI(
 # --- CORS configuration ---
 origins = [
     "http://localhost:8080", # For your local development
