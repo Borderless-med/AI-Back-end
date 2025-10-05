@@ -66,7 +66,8 @@ class ChatIntent(str, Enum):
 class GatekeeperDecision(BaseModel):
     intent: ChatIntent
 
-app = FastAPI(
+app = FastAPI()
+
 # --- CORS configuration ---
 origins = [
     "http://localhost:8080", # For your local development
@@ -88,9 +89,9 @@ app.add_middleware(
 def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
     from uuid import uuid4
     session_id = str(uuid4())
-    context = initial_context or {}
+    state = initial_context or {}
     try:
-        supabase.table("sessions").insert({"session_id": session_id, "context": context, "user_id": user_id}).execute()
+        supabase.table("sessions").insert({"session_id": session_id, "state": state, "user_id": user_id}).execute()
         return session_id
     except Exception as e:
         logging.error(f"Error creating session: {e}")
@@ -106,7 +107,7 @@ def get_session(session_id: str) -> Optional[dict]:
 
 def update_session(session_id: str, context: dict) -> bool:
     try:
-        supabase.table("sessions").update({"context": context}).eq("session_id", session_id).execute()
+        supabase.table("sessions").update({"state": context}).eq("session_id", session_id).execute()
         return True
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
@@ -127,7 +128,12 @@ def restore_session(query: SessionRestoreQuery):
         # SECURITY CHECK: Ensure the user owns this session
         if session and session.get("user_id") == query.user_id:
             print("Session found and user verified. Returning context.")
-            return {"success": True, "context": session.get("context", {})}
+            state = session.get("state") or {}
+            return {"success": True, "state": {
+                "applied_filters": state.get("applied_filters") or {},
+                "candidate_pool": state.get("candidate_pool") or [],
+                "booking_context": state.get("booking_context") or {}
+            }}
         else:
             print("Session not found or user mismatch.")
             raise HTTPException(status_code=404, detail="Session not found or access denied.")
@@ -165,26 +171,30 @@ def handle_chat(query: UserQuery):
 
     # --- Session Management ---
     session_id = query.session_id
-    context = {}
+    # Initialize standardized state structure
+    state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+    
     if session_id:
         session = get_session(session_id)
         if session and session.get("user_id") == query.user_id:
-            context = session.get("context", {})
+            raw_state = session.get("state") or {}
+            # Extract standardized state components
+            state["applied_filters"] = raw_state.get("applied_filters") or {}
+            state["candidate_pool"] = raw_state.get("candidate_pool") or []
+            state["booking_context"] = raw_state.get("booking_context") or {}
         else:
             session_id = create_session(user_id=query.user_id)
-            context = {}
     else:
         session_id = create_session(user_id=query.user_id)
-        context = {}
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
 
     # --- State Management ---
     latest_user_message = query.history[-1].content.lower()
-    previous_filters = query.applied_filters or {}
-    candidate_clinics = query.candidate_pool or []
-    booking_context = query.booking_context or {}
+    previous_filters = state["applied_filters"]
+    candidate_clinics = state["candidate_pool"]
+    booking_context = state["booking_context"]
     conversation_history_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in query.history])
     
     print(f"\n--- New Request ---")
@@ -278,17 +288,17 @@ def handle_chat(query: UserQuery):
     response_data["booking_context"] = response_data.get("booking_context", booking_context)
 
     # --- Final Response Assembly ---
-    # CRITICAL FIX: The context we save must be the NEW context from the response_data
-    new_context_to_save = {
-        "applied_filters": response_data.get("applied_filters"),
-        "candidate_pool": response_data.get("candidate_pool"),
-        "booking_context": response_data.get("booking_context"),
+    # Build new standardized state to persist
+    new_state = {
+        "applied_filters": response_data.get("applied_filters", previous_filters),
+        "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
+        "booking_context": response_data.get("booking_context", booking_context)
     }
     
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
         
-    update_session(session_id, new_context_to_save) # Use the new context
+    update_session(session_id, new_state)
     response_data["session_id"] = session_id
     
     return response_data
