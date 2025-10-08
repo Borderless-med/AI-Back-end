@@ -1,0 +1,104 @@
+* [33m5c8a590[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m Fix: Explicitly use gemini-1.5-pro-latest model
+* [33m0ad5e5a[m Fix: Finalize API limiter logic with secure DB function
+* [33mc119813[m Fix: Re-enable login wall and API limiter
+* [33m0eefbd3[m Fix response structure and session management; only return top clinics
+* [33m9b018f8[m Fix: Ensure session_id is returned by using JSONResponse and adding debug logs
+* [33m419b6d6[m Add Supabase session management with error handling
+* [33mdcfe194[m Fix indentation for service mapping block
+* [33md3605df[m Expand service_column_map for general dentistry and fix indentation
+* [33m5f7cc5a[m Update Gemini LLM models in main.py
+* [33m6bb5f47[m Add .env to gitignore to protect secrets
+* [33m93756af[m Add automated mirroring workflow
+* [33ma896896[m fix(model): Upgrade Gatekeeper to gemini-1.5-pro-001 for stability
+* [33mb66ab9e[m chore(debug): Add Python version logging to main
+* [33mca91ae6[m fix(prompt): Implement final jailbreak prompt for Gatekeeper
+* [33m4aeb80b[m fix(syntax): Correct indentation error in find_clinic_flow
+* [33m70ead9b[m fix(prompts): Improve Gatekeeper and Factual Brain robustness for production
+* [33m36f63e6[m feat(main): Restore original /chat logic after successful tracer test
+* [33m03cacfe[m test(tracer): Add tracer bullet to confirm backend endpoint
+* [33mb11966a[m fix(deps): Overhaul requirements with minimal set to resolve conflicts
+* [33m507b90c[m fix(deps): Remove pinned protobuf to resolve dependency conflict
+* [33m4c6ac95[m fix(env): Set Python version to 3.11 via runtime.txt and pin Google SDK
+* [33mfa0314f[m chore(deps): Remove requests for clean install
+* [33m6d9da07[m chore(deps): Add requests to force rebuild
+* [33mdd393be[m chore(deps): Upgrade Google AI SDK to latest version
+* [33m57426ac[m feat(models): Pin Gemini models to stable version 001
+* [33m9e2382f[m fix(formatter): Add robust fallback for data formatter AI
+* [33ma83eb8e[m fix(db): Sanitize service names before Supabase query
+* [33mf2a6fe3[m Feat: Implement metro JB filtering via is_metro_jb flag
+* [33m2fb9446[m Fix: Correct filtering logic and contextual memory prompt
+* [33md2874a0[m Finish modular refactor and harden all flows
+* [33m5336368[m Fix: Remove circular imports from flow modules
+* [33m0a6fc54[m Fix: Harden Gatekeeper and Booking Flow logic
+* [33m6502e9b[m Fix: Harden booking flow change-of-mind logic
+* [33mfb174e7[m Fix: Harden booking flow pre-check logic
+* [33mcaab894[m Fix: Implement bulletproof Gatekeeper logic
+* [33mfb0d48a[m feat: Complete migration to modular architecture
+* [33mea59b50[m Fix: Align ServiceEnum with database schema
+* [33m584ff43[m Fix: Expand travel keywords to improve interceptor coverage
+* [33m34cc721[m Test: Add dev prefix to travel response (Final Attempt)
+* [33m6932c8c[m Fix: Implement smarter planner to prevent state corruption
+* [33m6fb9125[m Test: Add dev prefix to travel response
+*   [33medea8a2[m Merge pull request #1 from gohseowping/feature/booking-assist
+[32m|[m[33m\[m  
+[32m|[m * [33m271a9b7[m Fix: Implement advanced prompt for user info extraction
+[32m|[m * [33me667d6c[m Fix: Add booking interceptor and bulletproof user info capture
+[32m|[m * [33m57a9b5e[m Fix: Add travel interceptor and enhance booking flow robustness
+[32m|[m * [33m242043a[m Fix: Improve service extraction and location filtering
+[32m|[m * [33m1abced1[m hotfix: Restore complete application logic
+[32m|[m * [33m07b807c[m refactor: Finalize code by removing Travel Advisor
+[32m|[m * [33m29c5264[m fix: Make Gatekeeper context-aware for multi-turn flows
+[32m|[m * [33m87c33d3[m fix: Harden Gatekeeper prompt for intent routing
+[32m|[m * [33m657c48f[m hotfix: Restore complete application logic
+[32m|[m * [33mc93d09b[m hotfix: Restore complete application logic
+[32m|[m * [33mc76cf82[m feat: Add Travel Advisor functionality
+[32m|[m * [33m5f2dca1[m hotfix: Update base_url to final public booking page URL
+[32m|[m * [33m180550c[m hotfix: Correct final booking URL to live demo link
+[32m|[m * [33mc917914[m fix: Finalize and harden all AI and application logic
+[32m|[m * [33me644c74[m hotfix: Update booking URL to correct live demo link
+[32m|[m * [33m31fa8a7[m hotfix: Correct critical NameError and restore full logic
+[32m|[m * [33m8da91d0[m hotfix: Update booking URL to correct demo link
+[32m|[m * [33m1f0fd21[m hotfix: Correct URL generation for booking handoff
+[32m|[m * [33mbf1fcff[m feat: Implement final Gatekeeper architecture with booking
+[32m|[m * [33m9c0acef[m feat: Implement Gatekeeper model for intent routing
+[32m|[m * [33m64c6e60[m hotfix: Deploy final, complete version with all features
+[32m|[m * [33m8cc7b89[m feat: Add final, bug-fixed Assisted Booking flow
+[32m|[m * [33m5fa48cb[m fix: Harden Factual Brain with Two-Prompt safety net
+[32m|[m * [33mc6ce37c[m feat: Implement Filter Engine architecture
+[32m|[m * [33m0c7cc1c[m fix: Correct critical deployment-blocking errors
+[32m|[m * [33m585a040[m fix: Correct critical deployment-blocking errors
+[32m|[m * [33m9c6792b[m hotfix: Correct deployment-blocking SyntaxError
+[32m|[m * [33mdd814e7[m fix: Correct SyntaxError in final generation prompt
+[32m|[m * [33mfd2b8fe[m fix: Simplify final generation prompt for reliability
+[32m|[m * [33mebb7cc4[m fix: Implement 'Best Effort' response for unverifiable queries
+[32m|[m * [33mf417f71[m feat: Finalize architecture with Deterministic Planner
+[32m|[m * [33me9a4b0b[m fix: Add defensive checks to Query Planner
+[32m|[m * [33m6bdc8b0[m fix: Repair and harden Query Planner logic
+[32m|[m * [33ma802ec9[m feat: Add Query Planner for multi-turn context
+[32m|[m * [33m42ff5b7[m fix: Fortify Dual-Stream architecture for session memory
+[32m|[m * [33m87facbe[m Fix: Add robust error handling for session memory logic
+[32m|[m * [33m1553c9b[m Feat: Implement backend logic for session memory
+[32m|[m * [33m3df5b55[m Revert: Implement definitive Dual-Stream architecture
+[32m|[m * [33ma4dd186[m Feat: Implement stable Back-to-Basics architecture with refined prompt
+[32m|[m * [33m125bd3b[m Feat: Implement definitive Dual-Stream architecture with robust DB call
+[32m|[m * [33mc7ac54d[m Fix: Correct file content for main.py to resolve SyntaxError
+[32m|[m * [33madf0a2c[m Fix: Update Supabase function and main.py to handle vector as text
+[32m|[m * [33m2d969c7[m Fix: Force vector to string format for Supabase RPC call
+[32m|[m * [33m6ace36e[m Fix: Correct unterminated string literal syntax error
+[32m|[m * [33m3ab80c6[m Feat: Implement Search First, Refine Later architecture
+[32m|[m * [33mb0c0f46[m Feat: Update KNOWN_TOWNSHIPS with complete list from database
+[32m|[m * [33mb7075c9[m Feat: Implement Location Type logic for smart filtering
+[32m|[m * [33me9a762e[m Feat: Implement Dual-Stream architecture with Factual and Ranking brains
+[32m|[m * [33m2db8d3d[m Fix: Refine Intent Router to prevent errors on general queries
+[32m|[m * [33me9ff245[m Feat: Implement Intent Router architecture for reliable filtering
+[32m|[m * [33m07be4b6[m Fix: Correct typo in dotenv import statement
+[32m|[m * [33m84fa34f[m Fix: Enhance Factual Brain with descriptive Pydantic model
+[32m|[m * [33me2dabe7[m Fix: Re-enable Factual Brain and filtering logic
+[32m|[m * [33mb8eedc9[m Fix: Revert to Perfect Example prompt for formatting
+[32m|[m * [33m6f88e3b[m Fix: Implement HTML formatting for brevity and reliable spacing
+[32m|[m * [33mc7abac6[m Fix: Implement Markdown formatting for response
+[32m|[m * [33md43a860[m Fix: Implement separator method to guarantee response spacing
+[32m|[m * [33m76ffdf5[m Feat: Shorten response to top 3 and enforce concise formatting
+[32m|[m * [33m9ab3b89[m Feat: Implement Simple Recipe for embeddings to fix semantic search
+[32m|[m * [33m7e4abc9[m Fix: Widen semantic search net and perfect response formatting
+[32m|[m * [33m3c087e0[m Feat: Implement weighted score rank

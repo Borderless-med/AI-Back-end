@@ -11,11 +11,12 @@ from enum import Enum
 from typing import List, Optional
 import logging
 
-# --- Import all four of our new, separated flow handlers ---
+# --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
 from flows.outofscope_flow import handle_out_of_scope
+from flows.remember_flow import handle_remember_session
 
 # --- Load environment variables and configure clients ---
 load_dotenv()
@@ -61,6 +62,7 @@ class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
     GENERAL_DENTAL_QUESTION = "general_dental_question"
+    REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
 
 class GatekeeperDecision(BaseModel):
@@ -209,11 +211,12 @@ def handle_chat(query: UserQuery):
 
         You MUST use the 'GatekeeperDecision' tool to provide your answer.
 
-        Here are the definitions of the four intents:
+        Here are the definitions of the five intents:
         1.  'find_clinic': The user is asking to find, locate, or get recommendations for a dental clinic. This includes asking for a list, asking for the "best" clinic, or asking for clinics in a specific location.
         2.  'book_appointment': The user is explicitly asking to book, schedule, or make an appointment. This often follows a 'find_clinic' request.
         3.  'general_dental_question': The user is asking a general question about a dental procedure, concept, or pricing (e.g., "what is a root canal?", "how much are veneers?").
-        4.  'out_of_scope': The user is having a casual conversation, greeting the chatbot, asking it to remember something, or asking a question completely unrelated to dentistry.
+        4.  'remember_session': The user is asking the chatbot to recall, remember, or show information from previous conversations or sessions.
+        5.  'out_of_scope': The user is having a casual conversation, greeting the chatbot, or asking a question completely unrelated to dentistry.
 
         --- EXAMPLES ---
         User Message: "Find me the best clinic for dental crown in JB"
@@ -225,10 +228,31 @@ def handle_chat(query: UserQuery):
         User Message: "what is the price of teeth whitening?"
         Intent: general_dental_question
 
-        User Message: "hello, are you still there"
-        Intent: out_of_scope
+        User Message: "remeber the 3 clinics from last time"
+        Intent: remember_session
 
         User Message: "do you remember what we talked about?"
+        Intent: remember_session
+
+        User Message: "can you recall our previous discussion?"
+        Intent: remember_session
+
+        User Message: "show me our last conversation"
+        Intent: remember_session
+
+        User Message: "what did we discuss in our past session?"
+        Intent: remember_session
+
+        User Message: "recollect what you told me before"
+        Intent: remember_session
+
+        User Message: "bring back our last interaction"
+        Intent: remember_session
+
+        User Message: "what was our previous chat about?"
+        Intent: remember_session
+
+        User Message: "hello, are you still there"
         Intent: out_of_scope
         ---
 
@@ -276,6 +300,11 @@ def handle_chat(query: UserQuery):
         response_data = handle_qna(
             latest_user_message=latest_user_message,
             generation_model=generation_model
+        )
+    elif intent == ChatIntent.REMEMBER_SESSION:
+        response_data = handle_remember_session(
+            session=session if 'session' in locals() else None,
+            latest_user_message=latest_user_message
         )
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
