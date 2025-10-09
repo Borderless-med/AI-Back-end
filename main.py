@@ -302,8 +302,10 @@ def handle_chat(query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
+        # Fix: Get the session data properly instead of relying on variable scope
+        session_data = get_session(session_id) if session_id else None
         response_data = handle_remember_session(
-            session=session if 'session' in locals() else None,
+            session=session_data,
             latest_user_message=latest_user_message
         )
     elif intent == ChatIntent.OUT_OF_SCOPE:
