@@ -107,9 +107,14 @@ def get_session(session_id: str) -> Optional[dict]:
         logging.error(f"Error fetching session {session_id}: {e}")
         return None
 
-def update_session(session_id: str, context: dict) -> bool:
+def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
     try:
-        supabase.table("sessions").update({"state": context}).eq("session_id", session_id).execute()
+        update_data = {"state": context}
+        if conversation_history:
+            update_data["context"] = conversation_history
+        print(f"[DEBUG] Updating session {session_id} with data: {update_data}")
+        result = supabase.table("sessions").update(update_data).eq("session_id", session_id).execute()
+        print(f"[DEBUG] Supabase update result: {result}")
         return True
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
@@ -328,8 +333,17 @@ def handle_chat(query: UserQuery):
     
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
+    
+    # Build conversation history for persistence
+    conversation_history = []
+    for msg in query.history:
+        conversation_history.append({"role": msg.role, "content": msg.content})
+    
+    # Add AI response to history
+    if response_data.get("response"):
+        conversation_history.append({"role": "assistant", "content": response_data["response"]})
         
-    update_session(session_id, new_state)
+    update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
     
     return response_data
