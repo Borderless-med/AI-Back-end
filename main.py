@@ -1,3 +1,29 @@
+# Limit for total messages per user in conversations table
+MESSAGE_LIMIT_PER_USER = 100
+
+# Helper to insert a message into conversations table, enforcing per-user limit
+def add_conversation_message(user_id, role, message):
+    """
+    Insert a single message into the conversations table, enforcing a per-user limit.
+    If the user already has MESSAGE_LIMIT_PER_USER messages, delete the oldest before inserting.
+    """
+    try:
+        # Count current messages for this user
+        count_resp = supabase.table("conversations").select("id,created_at").eq("user_id", user_id).order("created_at", asc=True).execute()
+        messages = count_resp.data or []
+        if len(messages) >= MESSAGE_LIMIT_PER_USER:
+            # Find the oldest message(s) to delete
+            old_ids = [row["id"] for row in messages[:len(messages) - MESSAGE_LIMIT_PER_USER + 1]]
+            if old_ids:
+                supabase.table("conversations").delete().in_("id", old_ids).execute()
+        # Insert the new message
+        supabase.table("conversations").insert({
+            "user_id": user_id,
+            "role": role,
+            "message": message
+        }).execute()
+    except Exception as e:
+        logging.error(f"Error inserting conversation message: {e}")
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
@@ -100,12 +126,17 @@ def create_session(user_id: str = None, initial_context: dict = None) -> Optiona
         return None
 
 def get_session(session_id: str) -> Optional[dict]:
-    try:
-        response = supabase.table("sessions").select("*").eq("session_id", session_id).single().execute()
-        return response.data if response.data else None
-    except Exception as e:
-        logging.error(f"Error fetching session {session_id}: {e}")
-        return None
+    # Accept user_id for more secure and reliable session lookup
+    def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
+        try:
+            query = supabase.table("sessions").select("*").eq("session_id", session_id)
+            if user_id:
+                query = query.eq("user_id", user_id)
+            response = query.single().execute()
+            return response.data if response.data else None
+        except Exception as e:
+            logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
+            return None
 
 def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
     try:
@@ -131,9 +162,9 @@ def read_root():
 def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
     try:
-        session = get_session(query.session_id)
-        # SECURITY CHECK: Ensure the user owns this session
-        if session and session.get("user_id") == query.user_id:
+        # Query by both session_id and user_id for reliability and security
+        session = get_session(query.session_id, user_id=query.user_id)
+        if session:
             print("Session found and user verified. Returning context.")
             state = session.get("state") or {}
             return {"success": True, "state": {
@@ -145,7 +176,7 @@ def restore_session(query: SessionRestoreQuery):
             print("Session not found or user mismatch.")
             raise HTTPException(status_code=404, detail="Session not found or access denied.")
     except Exception as e:
-        logging.error(f"Error restoring session {query.session_id}: {e}")
+        logging.error(f"Error restoring session {query.session_id} for user {query.user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
 @app.post("/chat")
@@ -338,12 +369,16 @@ def handle_chat(query: UserQuery):
     conversation_history = []
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
-    
+        # Add each user message to conversations table (enforce limit)
+        add_conversation_message(query.user_id, msg.role, msg.content)
+
     # Add AI response to history
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
-        
+        # Add assistant response to conversations table (enforce limit)
+        add_conversation_message(query.user_id, "assistant", response_data["response"])
+
     update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
-    
+
     return response_data
