@@ -8,8 +8,8 @@ def add_conversation_message(user_id, role, message):
     If the user already has MESSAGE_LIMIT_PER_USER messages, delete the oldest before inserting.
     """
     try:
-        # Count current messages for this user
-        count_resp = supabase.table("conversations").select("id,created_at").eq("user_id", user_id).order("created_at", asc=True).execute()
+        # Count current messages for this user (fix: remove asc=True, default is ascending)
+        count_resp = supabase.table("conversations").select("id,created_at").eq("user_id", user_id).order("created_at").execute()
         messages = count_resp.data or []
         if len(messages) >= MESSAGE_LIMIT_PER_USER:
             # Find the oldest message(s) to delete
@@ -113,6 +113,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # --- Session management helpers ---
 def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
     from uuid import uuid4
@@ -125,18 +126,17 @@ def create_session(user_id: str = None, initial_context: dict = None) -> Optiona
         logging.error(f"Error creating session: {e}")
         return None
 
-def get_session(session_id: str) -> Optional[dict]:
-    # Accept user_id for more secure and reliable session lookup
-    def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
-        try:
-            query = supabase.table("sessions").select("*").eq("session_id", session_id)
-            if user_id:
-                query = query.eq("user_id", user_id)
-            response = query.single().execute()
-            return response.data if response.data else None
-        except Exception as e:
-            logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
-            return None
+# Fix: Move get_session to top-level and always accept user_id
+def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
+    try:
+        query = supabase.table("sessions").select("*").eq("session_id", session_id)
+        if user_id:
+            query = query.eq("user_id", user_id)
+        response = query.single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
+        return None
 
 def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
     try:
@@ -162,7 +162,7 @@ def read_root():
 def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
     try:
-        # Query by both session_id and user_id for reliability and security
+        # Query by both session_id and user_id for reliability and security (fix: use new get_session)
         session = get_session(query.session_id, user_id=query.user_id)
         if session:
             print("Session found and user verified. Returning context.")
@@ -213,7 +213,8 @@ def handle_chat(query: UserQuery):
     state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
     
     if session_id:
-        session = get_session(session_id)
+        # Fix: always use new get_session with user_id
+        session = get_session(session_id, user_id=query.user_id)
         if session and session.get("user_id") == query.user_id:
             raw_state = session.get("state") or {}
             # Extract standardized state components
@@ -338,8 +339,8 @@ def handle_chat(query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # Fix: Get the session data properly instead of relying on variable scope
-        session_data = get_session(session_id) if session_id else None
+        # Fix: Get the session data properly, always use user_id
+        session_data = get_session(session_id, user_id=query.user_id) if session_id else None
         response_data = handle_remember_session(
             session=session_data,
             latest_user_message=latest_user_message
