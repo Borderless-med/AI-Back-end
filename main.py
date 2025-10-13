@@ -181,7 +181,7 @@ def read_root():
 def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
     try:
-        # Query by both session_id and user_id for reliability and security (fix: use new get_session)
+        # Use user_id directly from frontend (no JWT)
         session = get_session(query.session_id, user_id=query.user_id)
         if session:
             print("Session found and user verified. Returning context.")
@@ -200,8 +200,8 @@ def restore_session(query: SessionRestoreQuery):
 
 @app.post("/chat")
 def handle_chat(request: Request, query: UserQuery):
-    # Extract user_id from JWT
-    user_id = get_user_id_from_jwt(request)
+    # Use user_id directly from frontend (no JWT)
+    user_id = query.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
