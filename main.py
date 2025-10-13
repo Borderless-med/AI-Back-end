@@ -85,7 +85,7 @@ def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
     try:
         # Use user_id directly from frontend (no JWT)
-        session = get_session(query.session_id, user_id=query.user_id)
+        session = get_session(supabase, query.session_id, user_id=query.user_id)
         if session:
             print("Session found and user verified. Returning context.")
             state = session.get("state") or {}
@@ -137,11 +137,11 @@ def handle_chat(request: Request, query: UserQuery):
     
     if session_id:
         # Always use new get_session with user_id
-        session = get_session(session_id, user_id=user_id)
+        session = get_session(supabase, session_id, user_id=user_id)
         if not session:
             # REMARK: Session not found, create a new one for this user
-            session_id = create_session(user_id=user_id)
-            session = get_session(session_id, user_id=user_id)
+            session_id = create_session(supabase, user_id=user_id)
+            session = get_session(supabase, session_id, user_id=user_id)
         if session and session.get("user_id") == user_id:
             raw_state = session.get("state") or {}
             # Extract standardized state components
@@ -152,8 +152,8 @@ def handle_chat(request: Request, query: UserQuery):
             # REMARK: If still no session, handle as a critical error
             raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
     else:
-        session_id = create_session(user_id=user_id)
-        session = get_session(session_id, user_id=user_id)
+        session_id = create_session(supabase, user_id=user_id)
+        session = get_session(supabase, session_id, user_id=user_id)
         if not session:
             raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
 
@@ -271,7 +271,7 @@ def handle_chat(request: Request, query: UserQuery):
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
         # Fix: Get the session data properly, always use user_id
-        session_data = get_session(session_id, user_id=query.user_id) if session_id else None
+        session_data = get_session(supabase, session_id, user_id=query.user_id) if session_id else None
         response_data = handle_remember_session(
             session=session_data,
             latest_user_message=latest_user_message
