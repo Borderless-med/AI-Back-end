@@ -1,29 +1,14 @@
-# Limit for total messages per user in conversations table
-MESSAGE_LIMIT_PER_USER = 100
+"""
+main.py - FastAPI backend entry point for SG-JB Dental Chatbot
 
-# Helper to insert a message into conversations table, enforcing per-user limit
-def add_conversation_message(user_id, role, message):
-    """
-    Insert a single message into the conversations table, enforcing a per-user limit.
-    If the user already has MESSAGE_LIMIT_PER_USER messages, delete the oldest before inserting.
-    """
-    try:
-        # Count current messages for this user (fix: remove asc=True, default is ascending)
-        count_resp = supabase.table("conversations").select("id,created_at").eq("user_id", user_id).order("created_at").execute()
-        messages = count_resp.data or []
-        if len(messages) >= MESSAGE_LIMIT_PER_USER:
-            # Find the oldest message(s) to delete
-            old_ids = [row["id"] for row in messages[:len(messages) - MESSAGE_LIMIT_PER_USER + 1]]
-            if old_ids:
-                supabase.table("conversations").delete().in_("id", old_ids).execute()
-        # Insert the new message
-        supabase.table("conversations").insert({
-            "user_id": user_id,
-            "role": role,
-            "message": message
-        }).execute()
-    except Exception as e:
-        logging.error(f"Error inserting conversation message: {e}")
+Handles API routing, session management, and delegates to modular flow handlers (find clinic, booking, QNA, recall).
+Persistent session, booking, and QNA flows are supported. User identification is via frontend user_id only.
+"""
+
+
+# Import helpers and models from new modules
+from services.session_service import create_session, get_session, update_session, add_conversation_message
+from models import ChatMessage, UserQuery, SessionRestoreQuery, ChatIntent, GatekeeperDecision
 
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
@@ -32,29 +17,10 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from supabase import create_client, Client
-from enum import Enum
-from typing import List, Optional
-import logging
-import jwt
 
-# Helper to extract user_id from JWT (Authorization: Bearer <token>)
-def get_user_id_from_jwt(request: Request):
-    auth_header = request.headers.get("authorization")
-    print(f"[DEBUG] Incoming Authorization header: {auth_header}")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        print("[DEBUG] No valid Authorization header found.")
-        return None
-    token = auth_header.split(" ", 1)[1]
-    try:
-        decoded = jwt.decode(token, options={"verify_signature": False})
-        user_id = decoded.get("sub")
-        print(f"[DEBUG] Extracted user_id from JWT: {user_id}")
-        return user_id
-    except Exception as e:
-        print(f"[DEBUG] JWT decode error: {e}")
-        return None
+from supabase import create_client, Client
+import logging
+
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -85,33 +51,6 @@ embedding_model = 'models/embedding-001'
 # Use the Flash model for the final, simple text generation.
 generation_model = genai.GenerativeModel('gemini-flash-latest')
 
-# --- Pydantic Data Models (Centralized) ---
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class UserQuery(BaseModel):
-    history: List[ChatMessage]
-    applied_filters: Optional[dict] = Field(default=None)
-    candidate_pool: Optional[List[dict]] = Field(default=None)
-    booking_context: Optional[dict] = Field(default=None)
-    session_id: Optional[str] = Field(default=None)
-    user_id: Optional[str] = Field(default=None)
-
-# --- NEW: Pydantic model for the session restore endpoint ---
-class SessionRestoreQuery(BaseModel):
-    session_id: str
-    user_id: str
-
-class ChatIntent(str, Enum):
-    FIND_CLINIC = "find_clinic"
-    BOOK_APPOINTMENT = "book_appointment"
-    GENERAL_DENTAL_QUESTION = "general_dental_question"
-    REMEMBER_SESSION = "remember_session"
-    OUT_OF_SCOPE = "out_of_scope"
-
-class GatekeeperDecision(BaseModel):
-    intent: ChatIntent
 
 app = FastAPI()
 
@@ -133,42 +72,6 @@ app.add_middleware(
 )
 
 
-# --- Session management helpers ---
-def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
-    from uuid import uuid4
-    session_id = str(uuid4())
-    state = initial_context or {}
-    try:
-        supabase.table("sessions").insert({"session_id": session_id, "state": state, "user_id": user_id}).execute()
-        return session_id
-    except Exception as e:
-        logging.error(f"Error creating session: {e}")
-        return None
-
-# Fix: Move get_session to top-level and always accept user_id
-def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
-    try:
-        query = supabase.table("sessions").select("*").eq("session_id", session_id)
-        if user_id:
-            query = query.eq("user_id", user_id)
-        response = query.single().execute()
-        return response.data if response.data else None
-    except Exception as e:
-        logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
-        return None
-
-def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
-    try:
-        update_data = {"state": context}
-        if conversation_history:
-            update_data["context"] = conversation_history
-        print(f"[DEBUG] Updating session {session_id} with data: {update_data}")
-        result = supabase.table("sessions").update(update_data).eq("session_id", session_id).execute()
-        print(f"[DEBUG] Supabase update result: {result}")
-        return True
-    except Exception as e:
-        logging.error(f"Error updating session {session_id}: {e}")
-        return False
 
 RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
 
