@@ -24,18 +24,33 @@ def add_conversation_message(user_id, role, message):
         }).execute()
     except Exception as e:
         logging.error(f"Error inserting conversation message: {e}")
+
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
 import logging
+import jwt
+
+# Helper to extract user_id from JWT (Authorization: Bearer <token>)
+def get_user_id_from_jwt(request: Request):
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1]
+    try:
+        # For Supabase, we can decode without verifying signature for user_id extraction only
+        decoded = jwt.decode(token, options={"verify_signature": False})
+        return decoded.get("sub")
+    except Exception:
+        return None
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -180,14 +195,15 @@ def restore_session(query: SessionRestoreQuery):
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
 @app.post("/chat")
-def handle_chat(query: UserQuery):
-    # --- "LOGIN WALL" AND API LIMITER ---
-    if not query.user_id:
+def handle_chat(request: Request, query: UserQuery):
+    # Extract user_id from JWT
+    user_id = get_user_id_from_jwt(request)
+    if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
     try:
         # Step 1: Securely get the user's API call count using the database function
-        response = supabase.rpc('get_user_api_calls', {'user_id_input': query.user_id}).execute()
+        response = supabase.rpc('get_user_api_calls', {'user_id_input': user_id}).execute()
         api_calls_left = response.data
 
         # Step 2: Check if the user exists and has calls remaining
@@ -197,14 +213,14 @@ def handle_chat(query: UserQuery):
             raise HTTPException(status_code=429, detail="You have reached your monthly limit of API calls.")
 
         # Step 3: If checks pass, call the database function to decrement the counter
-        supabase.rpc('decrement_api_calls', {'user_id_input': query.user_id}).execute()
+        supabase.rpc('decrement_api_calls', {'user_id_input': user_id}).execute()
 
-        print(f"User {query.user_id} has {api_calls_left - 1} API calls remaining.")
+        print(f"User {user_id} has {api_calls_left - 1} API calls remaining.")
 
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        logging.error(f"Error in API limiter for user {query.user_id}: {e}")
+        logging.error(f"Error in API limiter for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred while verifying your access.")
 
     # --- Session Management ---
@@ -214,12 +230,12 @@ def handle_chat(query: UserQuery):
     
     if session_id:
         # Always use new get_session with user_id
-        session = get_session(session_id, user_id=query.user_id)
+        session = get_session(session_id, user_id=user_id)
         if not session:
             # REMARK: Session not found, create a new one for this user
-            session_id = create_session(user_id=query.user_id)
-            session = get_session(session_id, user_id=query.user_id)
-        if session and session.get("user_id") == query.user_id:
+            session_id = create_session(user_id=user_id)
+            session = get_session(session_id, user_id=user_id)
+        if session and session.get("user_id") == user_id:
             raw_state = session.get("state") or {}
             # Extract standardized state components
             state["applied_filters"] = raw_state.get("applied_filters") or {}
@@ -229,8 +245,8 @@ def handle_chat(query: UserQuery):
             # REMARK: If still no session, handle as a critical error
             raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
     else:
-        session_id = create_session(user_id=query.user_id)
-        session = get_session(session_id, user_id=query.user_id)
+        session_id = create_session(user_id=user_id)
+        session = get_session(session_id, user_id=user_id)
         if not session:
             raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
 
@@ -379,13 +395,13 @@ def handle_chat(query: UserQuery):
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
         # Add each user message to conversations table (enforce limit)
-        add_conversation_message(query.user_id, msg.role, msg.content)
+        add_conversation_message(user_id, msg.role, msg.content)
 
     # Add AI response to history
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
         # Add assistant response to conversations table (enforce limit)
-        add_conversation_message(query.user_id, "assistant", response_data["response"])
+        add_conversation_message(user_id, "assistant", response_data["response"])
 
     update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
