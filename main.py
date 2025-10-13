@@ -42,14 +42,18 @@ import jwt
 # Helper to extract user_id from JWT (Authorization: Bearer <token>)
 def get_user_id_from_jwt(request: Request):
     auth_header = request.headers.get("authorization")
+    print(f"[DEBUG] Incoming Authorization header: {auth_header}")
     if not auth_header or not auth_header.startswith("Bearer "):
+        print("[DEBUG] No valid Authorization header found.")
         return None
     token = auth_header.split(" ", 1)[1]
     try:
-        # For Supabase, we can decode without verifying signature for user_id extraction only
         decoded = jwt.decode(token, options={"verify_signature": False})
-        return decoded.get("sub")
-    except Exception:
+        user_id = decoded.get("sub")
+        print(f"[DEBUG] Extracted user_id from JWT: {user_id}")
+        return user_id
+    except Exception as e:
+        print(f"[DEBUG] JWT decode error: {e}")
         return None
 
 # --- Import all five of our new, separated flow handlers ---
