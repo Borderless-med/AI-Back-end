@@ -10,11 +10,17 @@ def handle_remember_session(session, latest_user_message):
             "response": "I don't have any previous conversation history to recall. This appears to be a new session. How can I help you today?"
         }
     
-    # Get conversation context and state from session
-    context = session.get("context", [])
-    state = session.get("state", {})
+    # Get conversation context and state from session (proper architecture)
+    context = session.get("context", [])  # Conversation history
+    state = session.get("state", {})      # Session state (clinic data, filters, booking)
     
-    if not context or len(context) == 0:
+    # Extract clinic data from state (proper storage location)
+    candidate_pool = state.get("candidate_pool", [])
+    applied_filters = state.get("applied_filters", {}) 
+    booking_context = state.get("booking_context", {})
+    
+    # Check if we have any meaningful session data
+    if not candidate_pool and not applied_filters and not booking_context and not context:
         return {
             "response": "I don't see any previous conversation history in our session. How can I help you today?"
         }
@@ -24,8 +30,7 @@ def handle_remember_session(session, latest_user_message):
     
     # Check if they're asking about clinic recommendations
     if any(word in message_lower for word in ['clinic', 'clinics', 'dentist', 'dental', 'location', 'recommend']):
-        candidate_pool = state.get("candidate_pool", [])
-        applied_filters = state.get("applied_filters", {})
+        # Use the data we extracted from context column
         
         if candidate_pool:
             clinic_summary = f"In our previous conversation, I recommended {len(candidate_pool)} dental clinics"
@@ -43,17 +48,22 @@ def handle_remember_session(session, latest_user_message):
             
             clinic_summary += ". Here are the clinics I found for you:\n\n"
             
-            # List the clinics from candidate pool
+            # List the clinics from candidate pool with full details
             for i, clinic in enumerate(candidate_pool[:5], 1):  # Show max 5 clinics
                 name = clinic.get('name', 'Unknown Clinic')
-                location = clinic.get('location', 'Location not specified')
-                clinic_summary += f"{i}. **{name}** - {location}\n"
-            
+                address = clinic.get('address', 'Address not specified')
+                rating = clinic.get('rating', 'N/A')
+                reviews = clinic.get('reviews', 'N/A')
+                website = clinic.get('website_url', None)
+                clinic_summary += f"{i}. **{name}**\n"
+                clinic_summary += f"   - Address: {address}\n"
+                clinic_summary += f"   - Rating: {rating} ({reviews} reviews)\n"
+                if website:
+                    clinic_summary += f"   - Website: {website}\n"
+                clinic_summary += "\n"
             if len(candidate_pool) > 5:
-                clinic_summary += f"\n... and {len(candidate_pool) - 5} more clinics."
-            
-            clinic_summary += "\n\nWould you like me to provide more details about any of these clinics or help you book an appointment?"
-            
+                clinic_summary += f"... and {len(candidate_pool) - 5} more clinics.\n"
+            clinic_summary += "Would you like me to provide more details about any of these clinics or help you book an appointment?"
             return {
                 "response": clinic_summary,
                 "applied_filters": applied_filters,
@@ -66,7 +76,6 @@ def handle_remember_session(session, latest_user_message):
     
     # Check if they're asking about booking context
     elif any(word in message_lower for word in ['book', 'appointment', 'schedule', 'reservation']):
-        booking_context = state.get("booking_context", {})
         
         if booking_context:
             booking_summary = "From our previous conversation, here's your booking information:\n\n"
@@ -91,10 +100,50 @@ def handle_remember_session(session, latest_user_message):
                 "response": "I don't see any previous booking information in our session. Would you like me to help you book an appointment now?"
             }
     
-    # General conversation recall - provide a summary of recent context
+    # General conversation recall or fallback clinic summary
     else:
-        # Get the last few meaningful exchanges
-        recent_context = context[-6:] if len(context) > 6 else context  # Last 3 exchanges (user + assistant)
+        # First, check if we have clinic data as a fallback
+        candidate_pool = state.get("candidate_pool", [])
+        applied_filters = state.get("applied_filters", {})
+        
+        if candidate_pool:
+            # REMARK: Provide full clinic details in fallback/general recall, matching main recall block
+            clinic_summary = f"In our previous conversation, I recommended {len(candidate_pool)} dental clinics"
+            if applied_filters:
+                filter_details = []
+                for key, value in applied_filters.items():
+                    if isinstance(value, list) and value:
+                        filter_details.append(f"{key}: {', '.join(value)}")
+                    elif value:
+                        filter_details.append(f"{key}: {value}")
+                if filter_details:
+                    clinic_summary += f" based on your preferences: {'; '.join(filter_details)}"
+            clinic_summary += ". Here are the clinics I found for you:\n\n"
+            # List the clinics from candidate pool with full details
+            for i, clinic in enumerate(candidate_pool[:5], 1):  # Show max 5 clinics
+                name = clinic.get('name', 'Unknown Clinic')
+                address = clinic.get('address', 'Address not specified')
+                rating = clinic.get('rating', 'N/A')
+                reviews = clinic.get('reviews', 'N/A')
+                website = clinic.get('website_url', None)
+                clinic_summary += f"{i}. **{name}**\n"
+                clinic_summary += f"   - Address: {address}\n"
+                clinic_summary += f"   - Rating: {rating} ({reviews} reviews)\n"
+                if website:
+                    clinic_summary += f"   - Website: {website}\n"
+                clinic_summary += "\n"
+            if len(candidate_pool) > 5:
+                clinic_summary += f"... and {len(candidate_pool) - 5} more clinics.\n"
+            clinic_summary += "Would you like me to provide more details about any of these clinics or help you book an appointment?"
+            return {
+                "response": clinic_summary,
+                "applied_filters": applied_filters,
+                "candidate_pool": candidate_pool
+            }
+        
+        # If we have conversation context, show that 
+        # Note: For now, we focus on clinic/booking data since that's what's actually stored
+        recent_context = []  # Conversation history not available in current storage structure
         
         if recent_context:
             conversation_summary = "Here's a summary of our recent conversation:\n\n"

@@ -213,8 +213,12 @@ def handle_chat(query: UserQuery):
     state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
     
     if session_id:
-        # Fix: always use new get_session with user_id
+        # Always use new get_session with user_id
         session = get_session(session_id, user_id=query.user_id)
+        if not session:
+            # REMARK: Session not found, create a new one for this user
+            session_id = create_session(user_id=query.user_id)
+            session = get_session(session_id, user_id=query.user_id)
         if session and session.get("user_id") == query.user_id:
             raw_state = session.get("state") or {}
             # Extract standardized state components
@@ -222,9 +226,13 @@ def handle_chat(query: UserQuery):
             state["candidate_pool"] = raw_state.get("candidate_pool") or []
             state["booking_context"] = raw_state.get("booking_context") or {}
         else:
-            session_id = create_session(user_id=query.user_id)
+            # REMARK: If still no session, handle as a critical error
+            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
     else:
         session_id = create_session(user_id=query.user_id)
+        session = get_session(session_id, user_id=query.user_id)
+        if not session:
+            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
