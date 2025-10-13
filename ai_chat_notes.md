@@ -224,3 +224,14 @@ I'll add this exchange to ai_chat_notes.md now.
 - If any issues arise during refactor, revert to this commit to restore full functionality.
 
 ---
+
+**Key Points (Post-last update, October 13, 2025):**
+
+- Refactored all session helper calls in main.py to include the supabase client as the first argument, matching the new function signatures in services/session_service.py.
+- Fixed indentation and block structure issues in main.py after patching, ensuring valid Python syntax.
+- Confirmed all affected files were saved and provided the correct git workflow for review and commit.
+- Diagnosed and resolved backend HTTP 500 errors caused by missing supabase argument in session helper calls.
+- Validated that session persistence and recall logic now use user_id from the frontend, with no JWT logic remaining.
+- Provided and reviewed a concise test plan for persistent session and recall, and confirmed the backend is ready for redeployment and further testing.
+
+---

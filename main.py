@@ -302,13 +302,13 @@ def handle_chat(request: Request, query: UserQuery):
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
         # Add each user message to conversations table (enforce limit)
-        add_conversation_message(user_id, msg.role, msg.content)
+    add_conversation_message(supabase, user_id, msg.role, msg.content)
 
     # Add AI response to history
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
         # Add assistant response to conversations table (enforce limit)
-        add_conversation_message(user_id, "assistant", response_data["response"])
+    add_conversation_message(supabase, user_id, "assistant", response_data["response"])
 
     update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
