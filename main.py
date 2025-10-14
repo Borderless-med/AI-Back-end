@@ -93,10 +93,17 @@ def restore_session(query: SessionRestoreQuery):
                 "applied_filters": state.get("applied_filters") or {},
                 "candidate_pool": state.get("candidate_pool") or [],
                 "booking_context": state.get("booking_context") or {}
-            }}
+            }, "session_id": query.session_id}
         else:
-            print("Session not found or user mismatch.")
-            raise HTTPException(status_code=404, detail="Session not found or access denied.")
+            print("Session not found or user mismatch. Creating new session.")
+            new_session_id = create_session(supabase, user_id=query.user_id)
+            new_session = get_session(supabase, new_session_id, user_id=query.user_id)
+            state = new_session.get("state") if new_session else {}
+            return {"success": True, "state": {
+                "applied_filters": state.get("applied_filters") or {},
+                "candidate_pool": state.get("candidate_pool") or [],
+                "booking_context": state.get("booking_context") or {}
+            }, "session_id": new_session_id}
     except Exception as e:
         logging.error(f"Error restoring session {query.session_id} for user {query.user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
