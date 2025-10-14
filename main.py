@@ -310,7 +310,7 @@ def handle_chat(request: Request, query: UserQuery):
         # Add assistant response to conversations table (enforce limit)
     add_conversation_message(supabase, user_id, "assistant", response_data["response"])
 
-    update_session(session_id, new_state, conversation_history)
+    update_session(supabase, session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
 
     return response_data
