@@ -34,7 +34,7 @@ load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY") # This MUST be your service_role key
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---

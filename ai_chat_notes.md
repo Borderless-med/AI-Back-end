@@ -1,3 +1,11 @@
+## 2025-10-13: Supabase RLS Troubleshooting and Next Steps
+
+- Reviewed current Supabase RLS policy for `public.conversations` table (with check: true for authenticated role).
+- Noted that backend uses service_role key, which should bypass RLS, but errors persist.
+- Clarified that authenticated role policy does not help if backend does not use JWT.
+- Advised to ensure backend uses service_role key, or to add a public insert policy with with check: true if needed.
+- Offered to provide exact SQL for public insert policy if required.
+- User decided to pause for the night; next step is to confirm backend key usage or update RLS for public role if errors persist.
 ---
 
 **Summary (October 13, 2025): Persistent Session & Conversation Issues**
