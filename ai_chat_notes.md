@@ -1,3 +1,15 @@
+# Progress Update (Oct 14, 2025)
+
+**Key Progress Since Last Update:**
+
+- Completed a critical audit of backend security, functionality, and reliability.
+- Identified that current user authentication relies on frontend-supplied user_id (UUID), which is functional but not secure.
+- Reviewed and discussed the importance of JWT (JSON Web Token) authentication for secure user verification.
+- Outlined a clear migration plan to JWT-based authentication, including estimated effort, risks, and reversibility.
+- Confirmed Supabase Auth is enabled for email login/sign-up, and JWTs are issued on successful login.
+- Clarified that Supabase Service API key is now used for backend DB operations, improving reliability and permissions, but does not replace the need for secure user authentication.
+- Provided step-by-step guidance for independently testing JWT generation via frontend login and inspecting the token.
+- Agreed that migration to JWT is the recommended next step for robust security, with minimal risk to current bot logic during testing.
 ## 2025-10-13: Supabase RLS Troubleshooting and Next Steps
 
 - Reviewed current Supabase RLS policy for `public.conversations` table (with check: true for authenticated role).

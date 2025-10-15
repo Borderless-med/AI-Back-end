@@ -277,12 +277,16 @@ def handle_chat(request: Request, query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # Fix: Get the session data properly, always use user_id
-        session_data = get_session(supabase, session_id, user_id=query.user_id) if session_id else None
-        response_data = handle_remember_session(
-            session=session_data,
-            latest_user_message=latest_user_message
-        )
+        # NEW: Fetch the most recent completed session for this user (excluding the current session)
+        from services.session_service import get_previous_session
+        previous_session = get_previous_session(supabase, user_id=query.user_id, exclude_session_id=session_id)
+        if previous_session:
+            response_data = handle_remember_session(
+                session=previous_session,
+                latest_user_message=latest_user_message
+            )
+        else:
+            response_data = {"response": "No previous session found to remember."}
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
     else:

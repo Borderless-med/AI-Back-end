@@ -52,3 +52,20 @@ def add_conversation_message(supabase: Client, user_id, role, message, MESSAGE_L
         }).execute()
     except Exception as e:
         logging.error(f"Error inserting conversation message: {e}")
+
+# NEW: Helper to get the most recent previous session for a user (excluding the current session)
+def get_previous_session(supabase: Client, user_id: str, exclude_session_id: str):
+    try:
+        result = supabase.table("sessions") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .neq("session_id", exclude_session_id) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        logging.error(f"Error fetching previous session for user {user_id}: {e}")
+        return None
