@@ -80,6 +80,7 @@ def read_root():
     return {"message": "API is running"}
 
 # --- NEW: Endpoint to restore session context ---
+
 @app.post("/restore_session")
 def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
@@ -95,15 +96,13 @@ def restore_session(query: SessionRestoreQuery):
                 "booking_context": state.get("booking_context") or {}
             }, "session_id": query.session_id}
         else:
-            print("Session not found or user mismatch. Creating new session.")
-            new_session_id = create_session(supabase, user_id=query.user_id)
-            new_session = get_session(supabase, new_session_id, user_id=query.user_id)
-            state = new_session.get("state") if new_session else {}
-            return {"success": True, "state": {
-                "applied_filters": state.get("applied_filters") or {},
-                "candidate_pool": state.get("candidate_pool") or [],
-                "booking_context": state.get("booking_context") or {}
-            }, "session_id": new_session_id}
+            print("Session not found or user mismatch. Not creating new session.")
+            # Do NOT create a new session here; just return a null/empty response
+            return {"success": False, "state": {
+                "applied_filters": {},
+                "candidate_pool": [],
+                "booking_context": {}
+            }, "session_id": None, "error": "Session not found or user mismatch."}
     except Exception as e:
         logging.error(f"Error restoring session {query.session_id} for user {query.user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
