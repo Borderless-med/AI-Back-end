@@ -109,6 +109,7 @@ def restore_session(query: SessionRestoreQuery):
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
 @app.post("/chat")
+
 def handle_chat(request: Request, query: UserQuery):
     # Use user_id directly from frontend (no JWT)
     user_id = query.user_id
@@ -139,30 +140,30 @@ def handle_chat(request: Request, query: UserQuery):
 
     # --- Session Management ---
     session_id = query.session_id
-    # Initialize standardized state structure
+    # Only create a session if there is at least one user message (not just restore or empty)
     state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
-    
+    session = None
     if session_id:
-        # Always use new get_session with user_id
         session = get_session(supabase, session_id, user_id=user_id)
-        if not session:
-            # REMARK: Session not found, create a new one for this user
+        # Only use session if it has real context (not empty)
+        if not session or not session.get("context"):
+            session_id = None
+            session = None
+    if not session_id:
+        # Only create a new session if this is a real chat (not just restore)
+        if query.history and any(msg.role == "user" for msg in query.history):
             session_id = create_session(supabase, user_id=user_id)
             session = get_session(supabase, session_id, user_id=user_id)
-        if session and session.get("user_id") == user_id:
-            raw_state = session.get("state") or {}
-            # Extract standardized state components
-            state["applied_filters"] = raw_state.get("applied_filters") or {}
-            state["candidate_pool"] = raw_state.get("candidate_pool") or []
-            state["booking_context"] = raw_state.get("booking_context") or {}
         else:
-            # REMARK: If still no session, handle as a critical error
-            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
+            # No chat yet, don't create session
+            return {"response": "Error: No active session. Please start a chat.", "session_id": None}
+    if session and session.get("user_id") == user_id:
+        raw_state = session.get("state") or {}
+        state["applied_filters"] = raw_state.get("applied_filters") or {}
+        state["candidate_pool"] = raw_state.get("candidate_pool") or []
+        state["booking_context"] = raw_state.get("booking_context") or {}
     else:
-        session_id = create_session(supabase, user_id=user_id)
-        session = get_session(supabase, session_id, user_id=user_id)
-        if not session:
-            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
+        raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
@@ -277,16 +278,29 @@ def handle_chat(request: Request, query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # NEW: Fetch the most recent completed session for this user (excluding the current session)
+        # Fetch the most recent previous session for this user with real chat data (context not null/empty)
         from services.session_service import get_previous_session
-        previous_session = get_previous_session(supabase, user_id=query.user_id, exclude_session_id=session_id)
+        previous_session = None
+        # Try to find a previous session with non-empty context
+        sessions_checked = 0
+        max_sessions_to_check = 5
+        last_checked_id = session_id
+        while sessions_checked < max_sessions_to_check:
+            candidate = get_previous_session(supabase, user_id=query.user_id, exclude_session_id=last_checked_id)
+            if not candidate:
+                break
+            if candidate.get("context") and len(candidate["context"]):
+                previous_session = candidate
+                break
+            last_checked_id = candidate["session_id"]
+            sessions_checked += 1
         if previous_session:
             response_data = handle_remember_session(
                 session=previous_session,
                 latest_user_message=latest_user_message
             )
         else:
-            response_data = {"response": "No previous session found to remember."}
+            response_data = {"response": "No previous session with conversation history found."}
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
     else:

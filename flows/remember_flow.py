@@ -5,7 +5,7 @@ def handle_remember_session(session, latest_user_message):
     information from previous conversations.
     """
     
-    if not session:
+    if not session or not session.get("context") or not len(session.get("context")):
         return {
             "response": "I don't have any previous conversation history to recall. This appears to be a new session. How can I help you today?"
         }
