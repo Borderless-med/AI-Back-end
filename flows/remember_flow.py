@@ -141,28 +141,22 @@ def handle_remember_session(session, latest_user_message):
                 "candidate_pool": candidate_pool
             }
         
-        # If we have conversation context, show that 
-        # Note: For now, we focus on clinic/booking data since that's what's actually stored
-        recent_context = []  # Conversation history not available in current storage structure
-        
-        if recent_context:
-            conversation_summary = "Here's a summary of our recent conversation:\n\n"
-            
+        # Always return previous session's conversation context, even if short
+        recent_context = context
+
+        if recent_context and len(recent_context) > 0:
+            conversation_summary = "Here's what we discussed in your previous session:\n\n"
             for i, exchange in enumerate(recent_context, 1):
                 role = exchange.get('role', 'unknown')
                 content = exchange.get('content', '')
-                
                 if role == 'user':
-                    conversation_summary += f"**You asked:** {content[:200]}{'...' if len(content) > 200 else ''}\n"
-                elif role == 'assistant':
-                    conversation_summary += f"**I responded:** {content[:200]}{'...' if len(content) > 200 else ''}\n\n"
-            
-            conversation_summary += "Is there something specific from our conversation you'd like me to elaborate on?"
-            
+                    conversation_summary += f"**You asked:** {content}\n"
+                elif role in ['assistant', 'model']:
+                    conversation_summary += f"**I responded:** {content}\n\n"
             return {
                 "response": conversation_summary
             }
         else:
             return {
-                "response": "I don't have enough conversation history to provide a meaningful summary. How can I help you today?"
+                "response": "I don't have any previous conversation history to recall. How can I help you today?"
             }
