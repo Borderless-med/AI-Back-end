@@ -107,8 +107,9 @@ def handle_remember_session(session, latest_user_message):
         applied_filters = state.get("applied_filters", {})
         
         if candidate_pool:
-            # REMARK: Provide full clinic details in fallback/general recall, matching main recall block
+            # Provide clinic summary as fallback
             clinic_summary = f"In our previous conversation, I recommended {len(candidate_pool)} dental clinics"
+            
             if applied_filters:
                 filter_details = []
                 for key, value in applied_filters.items():
@@ -116,25 +117,29 @@ def handle_remember_session(session, latest_user_message):
                         filter_details.append(f"{key}: {', '.join(value)}")
                     elif value:
                         filter_details.append(f"{key}: {value}")
+                
                 if filter_details:
                     clinic_summary += f" based on your preferences: {'; '.join(filter_details)}"
+            
             clinic_summary += ". Here are the clinics I found for you:\n\n"
-            # List the clinics from candidate pool with full details
+            
+            # List the clinics from candidate pool
             for i, clinic in enumerate(candidate_pool[:5], 1):  # Show max 5 clinics
                 name = clinic.get('name', 'Unknown Clinic')
-                address = clinic.get('address', 'Address not specified')
-                rating = clinic.get('rating', 'N/A')
-                reviews = clinic.get('reviews', 'N/A')
-                website = clinic.get('website_url', None)
-                clinic_summary += f"{i}. **{name}**\n"
-                clinic_summary += f"   - Address: {address}\n"
-                clinic_summary += f"   - Rating: {rating} ({reviews} reviews)\n"
-                if website:
-                    clinic_summary += f"   - Website: {website}\n"
-                clinic_summary += "\n"
+                location = clinic.get('address', 'Location not specified')
+                # Extract township/area from address
+                if ',' in location:
+                    location_parts = location.split(',')
+                    area = location_parts[1].strip() if len(location_parts) > 1 else location_parts[0].strip()
+                else:
+                    area = location
+                clinic_summary += f"{i}. **{name}** - {area}\n"
+            
             if len(candidate_pool) > 5:
-                clinic_summary += f"... and {len(candidate_pool) - 5} more clinics.\n"
-            clinic_summary += "Would you like me to provide more details about any of these clinics or help you book an appointment?"
+                clinic_summary += f"\n... and {len(candidate_pool) - 5} more clinics."
+            
+            clinic_summary += "\n\nWould you like me to provide more details about any of these clinics or help you book an appointment?"
+            
             return {
                 "response": clinic_summary,
                 "applied_filters": applied_filters,

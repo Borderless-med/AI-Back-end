@@ -1,15 +1,3 @@
-"""
-main.py - FastAPI backend entry point for SG-JB Dental Chatbot
-
-Handles API routing, session management, and delegates to modular flow handlers (find clinic, booking, QNA, recall).
-Persistent session, booking, and QNA flows are supported. User identification is via frontend user_id only.
-"""
-
-
-# Import helpers and models from new modules
-from services.session_service import create_session, get_session, update_session, add_conversation_message
-from models import ChatMessage, UserQuery, SessionRestoreQuery, ChatIntent, GatekeeperDecision
-
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
@@ -19,8 +7,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
 from jwt import InvalidTokenError
+from pydantic import BaseModel, Field
 from supabase import create_client, Client
+from enum import Enum
+from typing import List, Optional
 import logging
+
 def get_user_id_from_jwt(request: Request):
     auth_header = request.headers.get('authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
@@ -36,7 +28,6 @@ def get_user_id_from_jwt(request: Request):
     except InvalidTokenError as e:
         logging.error(f"JWT verification failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token.")
-
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -67,6 +58,33 @@ embedding_model = 'models/embedding-001'
 # Use the Flash model for the final, simple text generation.
 generation_model = genai.GenerativeModel('gemini-flash-latest')
 
+# --- Pydantic Data Models (Centralized) ---
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class UserQuery(BaseModel):
+    history: List[ChatMessage]
+    applied_filters: Optional[dict] = Field(default=None)
+    candidate_pool: Optional[List[dict]] = Field(default=None)
+    booking_context: Optional[dict] = Field(default=None)
+    session_id: Optional[str] = Field(default=None)
+    user_id: Optional[str] = Field(default=None)
+
+# --- NEW: Pydantic model for the session restore endpoint ---
+class SessionRestoreQuery(BaseModel):
+    session_id: str
+    user_id: str
+
+class ChatIntent(str, Enum):
+    FIND_CLINIC = "find_clinic"
+    BOOK_APPOINTMENT = "book_appointment"
+    GENERAL_DENTAL_QUESTION = "general_dental_question"
+    REMEMBER_SESSION = "remember_session"
+    OUT_OF_SCOPE = "out_of_scope"
+
+class GatekeeperDecision(BaseModel):
+    intent: ChatIntent
 
 app = FastAPI()
 
@@ -87,7 +105,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Session management helpers ---
+def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
+    from uuid import uuid4
+    session_id = str(uuid4())
+    state = initial_context or {}
+    try:
+        supabase.table("sessions").insert({"session_id": session_id, "state": state, "user_id": user_id}).execute()
+        return session_id
+    except Exception as e:
+        logging.error(f"Error creating session: {e}")
+        return None
+def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
+    try:
+        query = supabase.table("sessions").select("*").eq("session_id", session_id)
+        if user_id:
+            query = query.eq("user_id", user_id)
+        response = query.single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
+        return None
+            return None
 
+def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
+    try:
+        update_data = {"state": context}
+        if conversation_history:
+            update_data["context"] = conversation_history
+        print(f"[DEBUG] Updating session {session_id} with data: {update_data}")
+        result = supabase.table("sessions").update(update_data).eq("session_id", session_id).execute()
+        print(f"[DEBUG] Supabase update result: {result}")
+        return True
+    except Exception as e:
+        logging.error(f"Error updating session {session_id}: {e}")
+        return False
 
 RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
 
@@ -97,32 +149,26 @@ def read_root():
 
 # --- NEW: Endpoint to restore session context ---
 @app.post("/restore_session")
+@app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
     user_id = get_user_id_from_jwt(request)
     print(f"Attempting to restore session {query.session_id} for user {user_id}")
     try:
-        session = get_session(supabase, query.session_id, user_id=user_id)
-        if session:
-            print("Session found and user verified. Returning context.")
-            state = session.get("state") or {}
-            return {"success": True, "state": {
-                "applied_filters": state.get("applied_filters") or {},
-                "candidate_pool": state.get("candidate_pool") or [],
-                "booking_context": state.get("booking_context") or {}
-            }, "session_id": query.session_id}
-        else:
-            print("Session not found or user mismatch. Creating new session.")
-            new_session_id = create_session(supabase, user_id=user_id)
-            new_session = get_session(supabase, new_session_id, user_id=user_id)
-            state = new_session.get("state") if new_session else {}
-            return {"success": True, "state": {
-                "applied_filters": state.get("applied_filters") or {},
-                "candidate_pool": state.get("candidate_pool") or [],
-                "booking_context": state.get("booking_context") or {}
-            }, "session_id": new_session_id}
-    except Exception as e:
+        session = get_session(query.session_id, user_id=user_id)
+if session:
+    print("Session found and user verified. Returning context.")
+    state = session.get("state") or {}
+    return {"success": True, "state": {
+        "applied_filters": state.get("applied_filters") or {},
+        "candidate_pool": state.get("candidate_pool") or [],
+        "booking_context": state.get("booking_context") or {}
+    }}
+else:
+    print("Session not found or user mismatch.")
+    raise HTTPException(status_code=404, detail="Session not found or access denied.")
         logging.error(f"Error restoring session {query.session_id} for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
+
 
 @app.post("/chat")
 async def handle_chat(request: Request, query: UserQuery):
@@ -130,130 +176,44 @@ async def handle_chat(request: Request, query: UserQuery):
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
+    # --- API Limiter (optional, can be expanded) ---
     try:
-        # Step 1: Securely get the user's API call count using the database function
+        # Example: get API call count (can be expanded as needed)
         response = supabase.rpc('get_user_api_calls', {'user_id_input': user_id}).execute()
-        api_calls_left = response.data
-
-        # Step 2: Check if the user exists and has calls remaining
-        if api_calls_left is None:
-            raise HTTPException(status_code=404, detail="User profile not found. Please try signing out and in again.")
-        if api_calls_left <= 0:
-            raise HTTPException(status_code=429, detail="You have reached your monthly limit of API calls.")
-
-        # Step 3: If checks pass, call the database function to decrement the counter
-        supabase.rpc('decrement_api_calls', {'user_id_input': user_id}).execute()
-
-        print(f"User {user_id} has {api_calls_left - 1} API calls remaining.")
-
-    except HTTPException as http_exc:
-        raise http_exc
     except Exception as e:
         logging.error(f"Error in API limiter for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred while verifying your access.")
 
     # --- Session Management ---
     session_id = query.session_id
-    # Initialize standardized state structure
     state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
-    
+    session = None
     if session_id:
-        # Always use new get_session with user_id
-        session = get_session(supabase, session_id, user_id=user_id)
-        if not session:
-            # REMARK: Session not found, create a new one for this user
-            session_id = create_session(supabase, user_id=user_id)
-            session = get_session(supabase, session_id, user_id=user_id)
-        if session and session.get("user_id") == user_id:
+        session = get_session(session_id, user_id=user_id)
+        if session:
+            # Use the existing session
             raw_state = session.get("state") or {}
-            # Extract standardized state components
             state["applied_filters"] = raw_state.get("applied_filters") or {}
             state["candidate_pool"] = raw_state.get("candidate_pool") or []
             state["booking_context"] = raw_state.get("booking_context") or {}
         else:
-            # REMARK: If still no session, handle as a critical error
-            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
+            # Provided session_id is missing or not owned by user, create new session
+            session_id = create_session(user_id=user_id)
     else:
-        session_id = create_session(supabase, user_id=user_id)
-        session = get_session(supabase, session_id, user_id=user_id)
-        if not session:
-            raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
+        # No session_id provided, create new session
+        session_id = create_session(user_id=user_id)
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
 
-    # --- State Management ---
     latest_user_message = query.history[-1].content.lower()
     previous_filters = state["applied_filters"]
     candidate_clinics = state["candidate_pool"]
     booking_context = state["booking_context"]
-    conversation_history_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in query.history])
-    
+
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
-    
-    # --- Gatekeeper ---
-    intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     try:
-        gatekeeper_prompt = f"""
-        You are a highly intelligent and strict API routing assistant for a dental chatbot. 
-        Your ONLY job is to analyze the user's most recent message and classify its intent into one of four categories.
-
-        You MUST use the 'GatekeeperDecision' tool to provide your answer.
-
-        Here are the definitions of the five intents:
-        1.  'find_clinic': The user is asking to find, locate, or get recommendations for a dental clinic. This includes asking for a list, asking for the "best" clinic, or asking for clinics in a specific location.
-        2.  'book_appointment': The user is explicitly asking to book, schedule, or make an appointment. This often follows a 'find_clinic' request.
-        3.  'general_dental_question': The user is asking a general question about a dental procedure, concept, or pricing (e.g., "what is a root canal?", "how much are veneers?").
-        4.  'remember_session': The user is asking the chatbot to recall, remember, or show information from previous conversations or sessions.
-        5.  'out_of_scope': The user is having a casual conversation, greeting the chatbot, or asking a question completely unrelated to dentistry.
-
-        --- EXAMPLES ---
-        User Message: "Find me the best clinic for dental crown in JB"
-        Intent: find_clinic
-
-        User Message: "Okay, book me an appointment at Mount Austin Dental Hub"
-        Intent: book_appointment
-
-        User Message: "what is the price of teeth whitening?"
-        Intent: general_dental_question
-
-        User Message: "remeber the 3 clinics from last time"
-        Intent: remember_session
-
-        User Message: "do you remember what we talked about?"
-        Intent: remember_session
-
-        User Message: "can you recall our previous discussion?"
-        Intent: remember_session
-
-        User Message: "show me our last conversation"
-        Intent: remember_session
-
-        User Message: "what did we discuss in our past session?"
-        Intent: remember_session
-
-        User Message: "recollect what you told me before"
-        Intent: remember_session
-
-        User Message: "bring back our last interaction"
-        Intent: remember_session
-
-        User Message: "what was our previous chat about?"
-        Intent: remember_session
-
-        User Message: "hello, are you still there"
-        Intent: out_of_scope
-        ---
-
-        Analyze the following conversation and determine the intent of the VERY LAST user message.
-
-        Conversation History:
-        {conversation_history_for_prompt}
-
-        User's MOST RECENT message is: "{latest_user_message}"
-        """
-        gatekeeper_response = gatekeeper_model.generate_content(gatekeeper_prompt, tools=[GatekeeperDecision])
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
@@ -292,16 +252,12 @@ async def handle_chat(request: Request, query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # NEW: Fetch the most recent completed session for this user (excluding the current session)
-        from services.session_service import get_previous_session
-        previous_session = get_previous_session(supabase, user_id=query.user_id, exclude_session_id=session_id)
-        if previous_session:
-            response_data = handle_remember_session(
-                session=previous_session,
-                latest_user_message=latest_user_message
-            )
-        else:
-            response_data = {"response": "No previous session found to remember."}
+        # Fix: Get the session data properly instead of relying on variable scope
+        session_data = get_session(session_id) if session_id else None
+        response_data = handle_remember_session(
+            session=session_data,
+            latest_user_message=latest_user_message
+        )
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
     else:
@@ -327,16 +283,12 @@ async def handle_chat(request: Request, query: UserQuery):
     conversation_history = []
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
-        # Add each user message to conversations table (enforce limit)
-    add_conversation_message(supabase, user_id, msg.role, msg.content)
-
+    
     # Add AI response to history
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
-        # Add assistant response to conversations table (enforce limit)
-    add_conversation_message(supabase, user_id, "assistant", response_data["response"])
-
-    update_session(supabase, session_id, new_state, conversation_history)
+        
+    update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
-
+    
     return response_data
