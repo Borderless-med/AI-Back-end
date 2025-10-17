@@ -1,26 +1,15 @@
-"""
-main.py - FastAPI backend entry point for SG-JB Dental Chatbot
-
-Handles API routing, session management, and delegates to modular flow handlers (find clinic, booking, QNA, recall).
-Persistent session, booking, and QNA flows are supported. User identification is via frontend user_id only.
-"""
-
-
-# Import helpers and models from new modules
-from services.session_service import create_session, get_session, update_session, add_conversation_message
-from models import ChatMessage, UserQuery, SessionRestoreQuery, ChatIntent, GatekeeperDecision
-
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+from pydantic import BaseModel, Field
 from supabase import create_client, Client
+from enum import Enum
+from typing import List, Optional
 import logging
-
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -51,6 +40,33 @@ embedding_model = 'models/embedding-001'
 # Use the Flash model for the final, simple text generation.
 generation_model = genai.GenerativeModel('gemini-flash-latest')
 
+# --- Pydantic Data Models (Centralized) ---
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class UserQuery(BaseModel):
+    history: List[ChatMessage]
+    applied_filters: Optional[dict] = Field(default=None)
+    candidate_pool: Optional[List[dict]] = Field(default=None)
+    booking_context: Optional[dict] = Field(default=None)
+    session_id: Optional[str] = Field(default=None)
+    user_id: Optional[str] = Field(default=None)
+
+# --- NEW: Pydantic model for the session restore endpoint ---
+class SessionRestoreQuery(BaseModel):
+    session_id: str
+    user_id: str
+
+class ChatIntent(str, Enum):
+    FIND_CLINIC = "find_clinic"
+    BOOK_APPOINTMENT = "book_appointment"
+    GENERAL_DENTAL_QUESTION = "general_dental_question"
+    REMEMBER_SESSION = "remember_session"
+    OUT_OF_SCOPE = "out_of_scope"
+
+class GatekeeperDecision(BaseModel):
+    intent: ChatIntent
 
 app = FastAPI()
 
@@ -71,7 +87,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Session management helpers ---
+def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
+    from uuid import uuid4
+    session_id = str(uuid4())
+    state = initial_context or {}
+    try:
+        supabase.table("sessions").insert({"session_id": session_id, "state": state, "user_id": user_id}).execute()
+        return session_id
+    except Exception as e:
+        logging.error(f"Error creating session: {e}")
+        return None
 
+def get_session(session_id: str) -> Optional[dict]:
+    # Accept user_id for more secure and reliable session lookup
+    def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
+        try:
+            query = supabase.table("sessions").select("*").eq("session_id", session_id)
+            if user_id:
+                query = query.eq("user_id", user_id)
+            response = query.single().execute()
+            return response.data if response.data else None
+        except Exception as e:
+            logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
+            return None
+
+def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
+    try:
+        update_data = {"state": context}
+        if conversation_history:
+            update_data["context"] = conversation_history
+        print(f"[DEBUG] Updating session {session_id} with data: {update_data}")
+        result = supabase.table("sessions").update(update_data).eq("session_id", session_id).execute()
+        print(f"[DEBUG] Supabase update result: {result}")
+        return True
+    except Exception as e:
+        logging.error(f"Error updating session {session_id}: {e}")
+        return False
 
 RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
 
@@ -80,13 +132,12 @@ def read_root():
     return {"message": "API is running"}
 
 # --- NEW: Endpoint to restore session context ---
-
 @app.post("/restore_session")
 def restore_session(query: SessionRestoreQuery):
     print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
     try:
-        # Use user_id directly from frontend (no JWT)
-        session = get_session(supabase, query.session_id, user_id=query.user_id)
+        # Query by both session_id and user_id for reliability and security
+        session = get_session(query.session_id, user_id=query.user_id)
         if session:
             print("Session found and user verified. Returning context.")
             state = session.get("state") or {}
@@ -94,30 +145,23 @@ def restore_session(query: SessionRestoreQuery):
                 "applied_filters": state.get("applied_filters") or {},
                 "candidate_pool": state.get("candidate_pool") or [],
                 "booking_context": state.get("booking_context") or {}
-            }, "session_id": query.session_id}
+            }}
         else:
-            print("Session not found or user mismatch. Not creating new session.")
-            # Do NOT create a new session here; just return a null/empty response
-            return {"success": False, "state": {
-                "applied_filters": {},
-                "candidate_pool": [],
-                "booking_context": {}
-            }, "session_id": None, "error": "Session not found or user mismatch."}
+            print("Session not found or user mismatch.")
+            raise HTTPException(status_code=404, detail="Session not found or access denied.")
     except Exception as e:
         logging.error(f"Error restoring session {query.session_id} for user {query.user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
 @app.post("/chat")
-
-def handle_chat(request: Request, query: UserQuery):
-    # Use user_id directly from frontend (no JWT)
-    user_id = query.user_id
-    if not user_id:
+def handle_chat(query: UserQuery):
+    # --- "LOGIN WALL" AND API LIMITER ---
+    if not query.user_id:
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
     try:
         # Step 1: Securely get the user's API call count using the database function
-        response = supabase.rpc('get_user_api_calls', {'user_id_input': user_id}).execute()
+        response = supabase.rpc('get_user_api_calls', {'user_id_input': query.user_id}).execute()
         api_calls_left = response.data
 
         # Step 2: Check if the user exists and has calls remaining
@@ -127,42 +171,33 @@ def handle_chat(request: Request, query: UserQuery):
             raise HTTPException(status_code=429, detail="You have reached your monthly limit of API calls.")
 
         # Step 3: If checks pass, call the database function to decrement the counter
-        supabase.rpc('decrement_api_calls', {'user_id_input': user_id}).execute()
+        supabase.rpc('decrement_api_calls', {'user_id_input': query.user_id}).execute()
 
-        print(f"User {user_id} has {api_calls_left - 1} API calls remaining.")
+        print(f"User {query.user_id} has {api_calls_left - 1} API calls remaining.")
 
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        logging.error(f"Error in API limiter for user {user_id}: {e}")
+        logging.error(f"Error in API limiter for user {query.user_id}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred while verifying your access.")
 
     # --- Session Management ---
     session_id = query.session_id
-    # Only create a session if there is at least one user message (not just restore or empty)
+    # Initialize standardized state structure
     state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
-    session = None
+    
     if session_id:
-        session = get_session(supabase, session_id, user_id=user_id)
-        # Only use session if it has real context (not empty)
-        if not session or not session.get("context"):
-            session_id = None
-            session = None
-    if not session_id:
-        # Only create a new session if this is a real chat (not just restore)
-        if query.history and any(msg.role == "user" for msg in query.history):
-            session_id = create_session(supabase, user_id=user_id)
-            session = get_session(supabase, session_id, user_id=user_id)
+        session = get_session(session_id)
+        if session and session.get("user_id") == query.user_id:
+            raw_state = session.get("state") or {}
+            # Extract standardized state components
+            state["applied_filters"] = raw_state.get("applied_filters") or {}
+            state["candidate_pool"] = raw_state.get("candidate_pool") or []
+            state["booking_context"] = raw_state.get("booking_context") or {}
         else:
-            # No chat yet, don't create session
-            return {"response": "Error: No active session. Please start a chat.", "session_id": None}
-    if session and session.get("user_id") == user_id:
-        raw_state = session.get("state") or {}
-        state["applied_filters"] = raw_state.get("applied_filters") or {}
-        state["candidate_pool"] = raw_state.get("candidate_pool") or []
-        state["booking_context"] = raw_state.get("booking_context") or {}
+            session_id = create_session(user_id=query.user_id)
     else:
-        raise HTTPException(status_code=500, detail="Failed to create or fetch session.")
+        session_id = create_session(user_id=query.user_id)
 
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
@@ -277,29 +312,12 @@ def handle_chat(request: Request, query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # Fetch the most recent previous session for this user with real chat data (context not null/empty)
-        from services.session_service import get_previous_session
-        previous_session = None
-        # Try to find a previous session with non-empty context
-        sessions_checked = 0
-        max_sessions_to_check = 5
-        last_checked_id = session_id
-        while sessions_checked < max_sessions_to_check:
-            candidate = get_previous_session(supabase, user_id=query.user_id, exclude_session_id=last_checked_id)
-            if not candidate:
-                break
-            if candidate.get("context") and len(candidate["context"]):
-                previous_session = candidate
-                break
-            last_checked_id = candidate["session_id"]
-            sessions_checked += 1
-        if previous_session:
-            response_data = handle_remember_session(
-                session=previous_session,
-                latest_user_message=latest_user_message
-            )
-        else:
-            response_data = {"response": "No previous session with conversation history found."}
+        # Fix: Get the session data properly instead of relying on variable scope
+        session_data = get_session(session_id) if session_id else None
+        response_data = handle_remember_session(
+            session=session_data,
+            latest_user_message=latest_user_message
+        )
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
     else:
@@ -325,16 +343,12 @@ def handle_chat(request: Request, query: UserQuery):
     conversation_history = []
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
-        # Add each user message to conversations table (enforce limit)
-    add_conversation_message(supabase, user_id, msg.role, msg.content)
-
+    
     # Add AI response to history
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
-        # Add assistant response to conversations table (enforce limit)
-    add_conversation_message(supabase, user_id, "assistant", response_data["response"])
-
-    update_session(supabase, session_id, new_state, conversation_history)
+        
+    update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
-
+    
     return response_data

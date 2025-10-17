@@ -5,7 +5,7 @@ def handle_remember_session(session, latest_user_message):
     information from previous conversations.
     """
     
-    if not session or not session.get("context") or not len(session.get("context")):
+    if not session:
         return {
             "response": "I don't have any previous conversation history to recall. This appears to be a new session. How can I help you today?"
         }
@@ -107,8 +107,9 @@ def handle_remember_session(session, latest_user_message):
         applied_filters = state.get("applied_filters", {})
         
         if candidate_pool:
-            # REMARK: Provide full clinic details in fallback/general recall, matching main recall block
+            # Provide clinic summary as fallback
             clinic_summary = f"In our previous conversation, I recommended {len(candidate_pool)} dental clinics"
+            
             if applied_filters:
                 filter_details = []
                 for key, value in applied_filters.items():
@@ -116,47 +117,57 @@ def handle_remember_session(session, latest_user_message):
                         filter_details.append(f"{key}: {', '.join(value)}")
                     elif value:
                         filter_details.append(f"{key}: {value}")
+                
                 if filter_details:
                     clinic_summary += f" based on your preferences: {'; '.join(filter_details)}"
+            
             clinic_summary += ". Here are the clinics I found for you:\n\n"
-            # List the clinics from candidate pool with full details
+            
+            # List the clinics from candidate pool
             for i, clinic in enumerate(candidate_pool[:5], 1):  # Show max 5 clinics
                 name = clinic.get('name', 'Unknown Clinic')
-                address = clinic.get('address', 'Address not specified')
-                rating = clinic.get('rating', 'N/A')
-                reviews = clinic.get('reviews', 'N/A')
-                website = clinic.get('website_url', None)
-                clinic_summary += f"{i}. **{name}**\n"
-                clinic_summary += f"   - Address: {address}\n"
-                clinic_summary += f"   - Rating: {rating} ({reviews} reviews)\n"
-                if website:
-                    clinic_summary += f"   - Website: {website}\n"
-                clinic_summary += "\n"
+                location = clinic.get('address', 'Location not specified')
+                # Extract township/area from address
+                if ',' in location:
+                    location_parts = location.split(',')
+                    area = location_parts[1].strip() if len(location_parts) > 1 else location_parts[0].strip()
+                else:
+                    area = location
+                clinic_summary += f"{i}. **{name}** - {area}\n"
+            
             if len(candidate_pool) > 5:
-                clinic_summary += f"... and {len(candidate_pool) - 5} more clinics.\n"
-            clinic_summary += "Would you like me to provide more details about any of these clinics or help you book an appointment?"
+                clinic_summary += f"\n... and {len(candidate_pool) - 5} more clinics."
+            
+            clinic_summary += "\n\nWould you like me to provide more details about any of these clinics or help you book an appointment?"
+            
             return {
                 "response": clinic_summary,
                 "applied_filters": applied_filters,
                 "candidate_pool": candidate_pool
             }
         
-        # Always return previous session's conversation context, even if short
-        recent_context = context
-
-        if recent_context and len(recent_context) > 0:
-            conversation_summary = "Here's what we discussed in your previous session:\n\n"
+        # If we have conversation context, show that 
+        # Note: For now, we focus on clinic/booking data since that's what's actually stored
+        recent_context = []  # Conversation history not available in current storage structure
+        
+        if recent_context:
+            conversation_summary = "Here's a summary of our recent conversation:\n\n"
+            
             for i, exchange in enumerate(recent_context, 1):
                 role = exchange.get('role', 'unknown')
                 content = exchange.get('content', '')
+                
                 if role == 'user':
-                    conversation_summary += f"**You asked:** {content}\n"
-                elif role in ['assistant', 'model']:
-                    conversation_summary += f"**I responded:** {content}\n\n"
+                    conversation_summary += f"**You asked:** {content[:200]}{'...' if len(content) > 200 else ''}\n"
+                elif role == 'assistant':
+                    conversation_summary += f"**I responded:** {content[:200]}{'...' if len(content) > 200 else ''}\n\n"
+            
+            conversation_summary += "Is there something specific from our conversation you'd like me to elaborate on?"
+            
             return {
                 "response": conversation_summary
             }
         else:
             return {
-                "response": "I don't have any previous conversation history to recall. How can I help you today?"
+                "response": "I don't have enough conversation history to provide a meaningful summary. How can I help you today?"
             }
