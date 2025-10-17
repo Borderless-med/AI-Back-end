@@ -123,11 +123,11 @@ def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
             query = query.eq("user_id", user_id)
         response = query.single().execute()
         return response.data if response.data else None
+
     except Exception as e:
         logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
         return None
-            return None
-
+            
 def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
     try:
         update_data = {"state": context}
@@ -149,23 +149,23 @@ def read_root():
 
 # --- NEW: Endpoint to restore session context ---
 @app.post("/restore_session")
-@app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
     user_id = get_user_id_from_jwt(request)
     print(f"Attempting to restore session {query.session_id} for user {user_id}")
     try:
         session = get_session(query.session_id, user_id=user_id)
-if session:
-    print("Session found and user verified. Returning context.")
-    state = session.get("state") or {}
-    return {"success": True, "state": {
-        "applied_filters": state.get("applied_filters") or {},
-        "candidate_pool": state.get("candidate_pool") or [],
-        "booking_context": state.get("booking_context") or {}
-    }}
-else:
-    print("Session not found or user mismatch.")
-    raise HTTPException(status_code=404, detail="Session not found or access denied.")
+        if session:
+            print("Session found and user verified. Returning context.")
+            state = session.get("state") or {}
+            return {"success": True, "state": {
+                "applied_filters": state.get("applied_filters") or {},
+                "candidate_pool": state.get("candidate_pool") or [],
+                "booking_context": state.get("booking_context") or {}
+            }}
+        else:
+            print("Session not found or user mismatch.")
+            raise HTTPException(status_code=404, detail="Session not found or access denied.")
+    except Exception as e:
         logging.error(f"Error restoring session {query.session_id} for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
@@ -213,15 +213,25 @@ async def handle_chat(request: Request, query: UserQuery):
 
     print(f"\n--- New Request ---")
     print(f"Latest User Query: '{latest_user_message}'")
+
+    # Define conversation_history_for_prompt for downstream use
+    conversation_history_for_prompt = query.history
+
+    # Use gatekeeper_model to determine intent
     try:
+        gatekeeper_response = gatekeeper_model.generate_content([
+            {"role": "user", "parts": [latest_user_message]}
+        ])
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
             print(f"Gatekeeper decided intent is: {intent}")
         else:
             print(f"Gatekeeper Error: No valid function call. Defaulting to OUT_OF_SCOPE.")
+            intent = ChatIntent.OUT_OF_SCOPE
     except Exception as e:
         print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
+        intent = ChatIntent.OUT_OF_SCOPE
 
     # --- Router ---
     response_data = {}
