@@ -17,9 +17,25 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-
+import jwt
+from jwt import InvalidTokenError
 from supabase import create_client, Client
 import logging
+def get_user_id_from_jwt(request: Request):
+    auth_header = request.headers.get('authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = auth_header.split(' ')[1]
+    jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
+    try:
+        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+        user_id = payload.get('sub')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="JWT missing sub claim.")
+        return user_id
+    except InvalidTokenError as e:
+        logging.error(f"JWT verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
 
 
 # --- Import all five of our new, separated flow handlers ---
@@ -81,11 +97,11 @@ def read_root():
 
 # --- NEW: Endpoint to restore session context ---
 @app.post("/restore_session")
-def restore_session(query: SessionRestoreQuery):
-    print(f"Attempting to restore session {query.session_id} for user {query.user_id}")
+async def restore_session(request: Request, query: SessionRestoreQuery):
+    user_id = get_user_id_from_jwt(request)
+    print(f"Attempting to restore session {query.session_id} for user {user_id}")
     try:
-        # Use user_id directly from frontend (no JWT)
-        session = get_session(supabase, query.session_id, user_id=query.user_id)
+        session = get_session(supabase, query.session_id, user_id=user_id)
         if session:
             print("Session found and user verified. Returning context.")
             state = session.get("state") or {}
@@ -96,8 +112,8 @@ def restore_session(query: SessionRestoreQuery):
             }, "session_id": query.session_id}
         else:
             print("Session not found or user mismatch. Creating new session.")
-            new_session_id = create_session(supabase, user_id=query.user_id)
-            new_session = get_session(supabase, new_session_id, user_id=query.user_id)
+            new_session_id = create_session(supabase, user_id=user_id)
+            new_session = get_session(supabase, new_session_id, user_id=user_id)
             state = new_session.get("state") if new_session else {}
             return {"success": True, "state": {
                 "applied_filters": state.get("applied_filters") or {},
@@ -105,13 +121,12 @@ def restore_session(query: SessionRestoreQuery):
                 "booking_context": state.get("booking_context") or {}
             }, "session_id": new_session_id}
     except Exception as e:
-        logging.error(f"Error restoring session {query.session_id} for user {query.user_id}: {e}")
+        logging.error(f"Error restoring session {query.session_id} for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to restore session.")
 
 @app.post("/chat")
-def handle_chat(request: Request, query: UserQuery):
-    # Use user_id directly from frontend (no JWT)
-    user_id = query.user_id
+async def handle_chat(request: Request, query: UserQuery):
+    user_id = get_user_id_from_jwt(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
