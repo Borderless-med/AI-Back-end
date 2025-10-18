@@ -20,14 +20,27 @@ def get_user_id_from_jwt(request: Request):
     token = auth_header.split(' ')[1]
     jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
     try:
-        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+        logging.debug(f"Attempting to decode JWT: {token[:30]}...")
+        payload = jwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"]
+        )
+        logging.debug(f"JWT decoded successfully: {payload}")
         user_id = payload.get('sub')
         if not user_id:
+            logging.error("JWT missing sub claim.")
             raise HTTPException(status_code=401, detail="JWT missing sub claim.")
         return user_id
-    except InvalidTokenError as e:
-        logging.error(f"JWT verification failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+    except jwt.ExpiredSignatureError:
+        logging.error("JWT verification failed: Token has expired.")
+        raise HTTPException(status_code=401, detail="Token has expired.")
+    except jwt.InvalidTokenError as e:
+        logging.error(f"JWT verification failed: Invalid token. Details: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error during JWT decoding: {e}")
+        raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
