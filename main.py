@@ -28,7 +28,8 @@ def get_user_id_from_jwt(request: Request):
         payload = jwt.decode(
             token,
             jwt_secret,
-            algorithms=["HS256"]
+            algorithms=["HS256"],
+            audience="authenticated"
         )
         print(f"[DEBUG] JWT decoded successfully: {payload}")
         user_id = payload.get('sub')
