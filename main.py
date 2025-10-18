@@ -254,6 +254,7 @@ async def handle_chat(request: Request, query: UserQuery):
         gatekeeper_response = gatekeeper_model.generate_content([
             {"role": "user", "parts": [latest_user_message]}
         ])
+        print(f"[DEBUG] Raw gatekeeper_response: {gatekeeper_response}")
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
             intent = part.function_call.args['intent']
