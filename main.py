@@ -46,6 +46,8 @@ def get_user_id_from_jwt(request: Request):
     except Exception as e:
         print(f"[ERROR] Unexpected error during JWT decoding: {e}")
         raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
+# Import conversation logging helper
+from services.session_service import add_conversation_message
 
 # --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
@@ -240,6 +242,14 @@ async def handle_chat(request: Request, query: UserQuery):
     conversation_history_for_prompt = query.history
 
     # Use gatekeeper_model to determine intent
+    # --- Log user message to conversations table ---
+    try:
+        add_conversation_message(supabase, query.user_id, "user", query.history[-1].content)
+    except Exception as e:
+        logging.error(f"Failed to log user message to conversations: {e}")
+    
+    # --- Gatekeeper ---
+    intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     try:
         gatekeeper_response = gatekeeper_model.generate_content([
             {"role": "user", "parts": [latest_user_message]}
@@ -315,12 +325,16 @@ async def handle_chat(request: Request, query: UserQuery):
     conversation_history = []
     for msg in query.history:
         conversation_history.append({"role": msg.role, "content": msg.content})
-    
-    # Add AI response to history
+
+    # Add AI response to history and log to conversations table
     if response_data.get("response"):
         conversation_history.append({"role": "assistant", "content": response_data["response"]})
-        
+        try:
+            add_conversation_message(supabase, query.user_id, "assistant", response_data["response"])
+        except Exception as e:
+            logging.error(f"Failed to log assistant message to conversations: {e}")
+
     update_session(session_id, new_state, conversation_history)
     response_data["session_id"] = session_id
-    
+
     return response_data
