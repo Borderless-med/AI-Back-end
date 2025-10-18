@@ -14,32 +14,36 @@ from typing import List, Optional
 import logging
 
 def get_user_id_from_jwt(request: Request):
+    print("[DEBUG] Entered get_user_id_from_jwt")
     auth_header = request.headers.get('authorization')
+    print(f"[DEBUG] Authorization header: {auth_header}")
     if not auth_header or not auth_header.startswith('Bearer '):
+        print("[ERROR] Missing or invalid Authorization header.")
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = auth_header.split(' ')[1]
     jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
+    print(f"[DEBUG] JWT secret loaded: {jwt_secret is not None}")
     try:
-        logging.debug(f"Attempting to decode JWT: {token[:30]}...")
+        print(f"[DEBUG] Attempting to decode JWT: {token[:30]}...")
         payload = jwt.decode(
             token,
             jwt_secret,
             algorithms=["HS256"]
         )
-        logging.debug(f"JWT decoded successfully: {payload}")
+        print(f"[DEBUG] JWT decoded successfully: {payload}")
         user_id = payload.get('sub')
         if not user_id:
-            logging.error("JWT missing sub claim.")
+            print("[ERROR] JWT missing sub claim.")
             raise HTTPException(status_code=401, detail="JWT missing sub claim.")
         return user_id
     except jwt.ExpiredSignatureError:
-        logging.error("JWT verification failed: Token has expired.")
+        print("[ERROR] JWT verification failed: Token has expired.")
         raise HTTPException(status_code=401, detail="Token has expired.")
     except jwt.InvalidTokenError as e:
-        logging.error(f"JWT verification failed: Invalid token. Details: {e}")
+        print(f"[ERROR] JWT verification failed: Invalid token. Details: {e}")
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
     except Exception as e:
-        logging.error(f"Unexpected error during JWT decoding: {e}")
+        print(f"[ERROR] Unexpected error during JWT decoding: {e}")
         raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
 
 # --- Import all five of our new, separated flow handlers ---
@@ -185,8 +189,11 @@ async def restore_session(request: Request, query: SessionRestoreQuery):
 
 @app.post("/chat")
 async def handle_chat(request: Request, query: UserQuery):
+    print("[DEBUG] /chat endpoint called")
     user_id = get_user_id_from_jwt(request)
+    print(f"[DEBUG] user_id from JWT: {user_id}")
     if not user_id:
+        print("[ERROR] No user_id returned from JWT decode.")
         raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
     # --- API Limiter (optional, can be expanded) ---
