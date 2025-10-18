@@ -112,7 +112,8 @@ origins = [
     "https://sg-smile-saver-git-main-gsps-projects-5403164b.vercel.app", # An old production URL
     "https://sg-smile-saver-5rouwfubi-gsps-projects-5403164b.vercel.app", # The NEW URL from the error
     "https://sg-smile-saver.vercel.app", # Your clean production URL
-    "https://www.sg-jb-dental.com" # Your final custom domain
+    "https://www.sg-jb-dental.com", # Your final custom domain
+    "https://sg-smile-saver-git-jwt-migration-gsps-projects-5403164b.vercel.app" # CURRENT VERCEL DEPLOYMENT
 ]
 app.add_middleware(
     CORSMiddleware,
