@@ -251,9 +251,28 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     try:
-        gatekeeper_response = gatekeeper_model.generate_content([
-            {"role": "user", "parts": [latest_user_message]}
-        ])
+        gatekeeper_response = gatekeeper_model.generate_content(
+            [{"role": "user", "parts": [latest_user_message]}],
+            tools=[
+                {
+                    "name": "classify_intent",
+                    "description": "Classifies the user's intent for dental chatbot routing.",
+                    "parameters": {
+                        "intent": {
+                            "type": "string",
+                            "enum": [
+                                "find_clinic",
+                                "book_appointment",
+                                "general_dental_question",
+                                "remember_session",
+                                "out_of_scope"
+                            ],
+                            "description": "The classified intent of the user's query."
+                        }
+                    }
+                }
+            ]
+        )
         print(f"[DEBUG] Raw gatekeeper_response: {gatekeeper_response}")
         part = gatekeeper_response.candidates[0].content.parts[0]
         if hasattr(part, 'function_call') and part.function_call.args:
