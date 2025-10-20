@@ -171,7 +171,15 @@ def read_root():
 # --- NEW: Endpoint to restore session context ---
 @app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
-    user_id = get_user_id_from_jwt(request)
+    print("[DEBUG] /restore_session endpoint called")
+    print(f"[DEBUG] Request headers: {dict(request.headers)}")
+    user_id = None
+    try:
+        user_id = get_user_id_from_jwt(request)
+        print(f"[DEBUG] user_id from JWT: {user_id}")
+    except Exception as e:
+        print(f"[DEBUG] Exception in get_user_id_from_jwt: {e}")
+        raise
     print(f"Attempting to restore session {query.session_id} for user {user_id}")
     try:
         session = get_session(query.session_id, user_id=user_id)
