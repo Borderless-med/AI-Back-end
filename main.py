@@ -258,17 +258,21 @@ async def handle_chat(request: Request, query: UserQuery):
                     "name": "classify_intent",
                     "description": "Classifies the user's intent for dental chatbot routing.",
                     "parameters": {
-                        "intent": {
-                            "type": "string",
-                            "enum": [
-                                "find_clinic",
-                                "book_appointment",
-                                "general_dental_question",
-                                "remember_session",
-                                "out_of_scope"
-                            ],
-                            "description": "The classified intent of the user's query."
-                        }
+                        "type": "object",
+                        "properties": {
+                            "intent": {
+                                "type": "string",
+                                "enum": [
+                                    "find_clinic",
+                                    "book_appointment",
+                                    "general_dental_question",
+                                    "remember_session",
+                                    "out_of_scope"
+                                ],
+                                "description": "The classified intent of the user's query."
+                            }
+                        },
+                        "required": ["intent"]
                     }
                 }
             ]
