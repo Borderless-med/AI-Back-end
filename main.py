@@ -259,58 +259,41 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     try:
-        gatekeeper_response = gatekeeper_model.generate_content(
-            [{"role": "user", "parts": [latest_user_message]}],
-            tools=[
-                {
-                    "name": "classify_intent",
-                    "description": "Classifies the user's intent for dental chatbot routing.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "intent": {
-                                "type": "string",
-                                "enum": [
-                                    "find_clinic",
-                                    "book_appointment",
-                                    "general_dental_question",
-                                    "remember_session",
-                                    "out_of_scope"
-                                ],
-                                "description": "The classified intent of the user's query."
-                            }
-                        },
-                        "required": ["intent"]
-                    }
-                }
-            ]
-        )
-        print(f"[DEBUG] Raw gatekeeper_response: {gatekeeper_response}")
-        # Extra debug: print candidates, content, parts, and function_call if present
         try:
-            candidate = gatekeeper_response.candidates[0]
-            print(f"[DEBUG] candidate: {candidate}")
-            content = candidate.content
-            print(f"[DEBUG] candidate.content: {content}")
-            parts = content.parts
-            print(f"[DEBUG] candidate.content.parts: {parts}")
-            part = parts[0]
-            print(f"[DEBUG] part: {part}")
-            if hasattr(part, 'function_call'):
-                print(f"[DEBUG] part.function_call: {part.function_call}")
-                if hasattr(part.function_call, 'args'):
-                    print(f"[DEBUG] part.function_call.args: {part.function_call.args}")
-                    intent = part.function_call.args.get('intent', ChatIntent.OUT_OF_SCOPE)
-                    print(f"Gatekeeper decided intent is: {intent}")
-                else:
-                    print(f"Gatekeeper Error: function_call has no args. Defaulting to OUT_OF_SCOPE.")
-                    intent = ChatIntent.OUT_OF_SCOPE
-            else:
-                print(f"Gatekeeper Error: No function_call in part. Defaulting to OUT_OF_SCOPE.")
-                intent = ChatIntent.OUT_OF_SCOPE
-        except Exception as parse_exc:
-            print(f"Gatekeeper Exception during response parsing: {parse_exc}. Defaulting to OUT_OF_SCOPE.")
-            intent = ChatIntent.OUT_OF_SCOPE
+            gatekeeper_response = gatekeeper_model.generate_content(
+                [{"role": "user", "parts": [latest_user_message]}],
+                tools=[
+                    {
+                        "name": "classify_intent",
+                        "description": "Classifies the user's intent for dental chatbot routing.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "intent": {
+                                    "type": "string",
+                                    "enum": [
+                                        "find_clinic",
+                                        "book_appointment",
+                                        "general_dental_question",
+                                        "remember_session",
+                                        "out_of_scope"
+                                    ],
+                                    "description": "The classified intent of the user's query."
+                                }
+                            },
+                            "required": ["intent"]
+                        }
+                    }
+                ]
+            )
+            print(f"[DEBUG] Raw gatekeeper_response: {gatekeeper_response}")
+            print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+            # Do not parse anything yet, just print and raise to see the log
+            raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
+        except Exception as api_exc:
+            print(f"[DEBUG] Gemini API call exception: {api_exc}")
+            print(f"[DEBUG] Gemini API call exception type: {type(api_exc)}")
+            raise
     except Exception as e:
         print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
         intent = ChatIntent.OUT_OF_SCOPE
