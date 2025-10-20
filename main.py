@@ -286,12 +286,30 @@ async def handle_chat(request: Request, query: UserQuery):
             ]
         )
         print(f"[DEBUG] Raw gatekeeper_response: {gatekeeper_response}")
-        part = gatekeeper_response.candidates[0].content.parts[0]
-        if hasattr(part, 'function_call') and part.function_call.args:
-            intent = part.function_call.args['intent']
-            print(f"Gatekeeper decided intent is: {intent}")
-        else:
-            print(f"Gatekeeper Error: No valid function call. Defaulting to OUT_OF_SCOPE.")
+        # Extra debug: print candidates, content, parts, and function_call if present
+        try:
+            candidate = gatekeeper_response.candidates[0]
+            print(f"[DEBUG] candidate: {candidate}")
+            content = candidate.content
+            print(f"[DEBUG] candidate.content: {content}")
+            parts = content.parts
+            print(f"[DEBUG] candidate.content.parts: {parts}")
+            part = parts[0]
+            print(f"[DEBUG] part: {part}")
+            if hasattr(part, 'function_call'):
+                print(f"[DEBUG] part.function_call: {part.function_call}")
+                if hasattr(part.function_call, 'args'):
+                    print(f"[DEBUG] part.function_call.args: {part.function_call.args}")
+                    intent = part.function_call.args.get('intent', ChatIntent.OUT_OF_SCOPE)
+                    print(f"Gatekeeper decided intent is: {intent}")
+                else:
+                    print(f"Gatekeeper Error: function_call has no args. Defaulting to OUT_OF_SCOPE.")
+                    intent = ChatIntent.OUT_OF_SCOPE
+            else:
+                print(f"Gatekeeper Error: No function_call in part. Defaulting to OUT_OF_SCOPE.")
+                intent = ChatIntent.OUT_OF_SCOPE
+        except Exception as parse_exc:
+            print(f"Gatekeeper Exception during response parsing: {parse_exc}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
     except Exception as e:
         print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
