@@ -288,67 +288,40 @@ async def handle_chat(request: Request, query: UserQuery):
 
     # Minimal tools schema: one tool, two intents
 
-    import json
-    import traceback
 
     # [MARKDOWN_COMMENT_BEGIN]
-    # Previous minimal tools schema (object):
-    # minimal_tools = [
-    #     {
-    #         "name": "classify_intent",
-    #         "description": "Classify the user's message as either a general dental question or out of scope.",
-    #         "parameters": {
-    #             "type": "object",
-    #             "properties": {
-    #                 "intent": {
-    #                     "type": "string",
-    #                     "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
-    #                     "description": "The intent of the user's message."
-    #                 }
-    #             },
-    #             "required": ["intent"]
-    #         }
-    #     }
-    # ]
+    # Previous Gemini function-calling code using deprecated SDK is commented out above for reversibility.
     # [MARKDOWN_COMMENT_END]
 
-    # Step 2: Try a different minimal tools schema (parameters type: string)
-    minimal_tools = [
-        {
-            "name": "classify_intent",
-            "description": "Classify the user's message as either a general dental question or out of scope.",
-            "parameters": {
-                "type": "string",
-                "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
-                "description": "The intent of the user's message."
-            }
-        }
-    ]
+    # --- NEW: Gemini function-calling using google-genai SDK ---
+    from google import genai
+    from google.genai import types
+
+    def classify_intent(intent: str):
+        """Classifies the user's intent as GENERAL_DENTAL_QUESTION or OUT_OF_SCOPE."""
+        return intent
+
+    client = genai.Client()
+    config = types.GenerateContentConfig(
+        tools=[classify_intent]
+    )
     try:
-        gatekeeper_response = gatekeeper_model.generate_content(
-            [
-                {"role": "user", "parts": [latest_user_message]}
-            ],
-            tools=minimal_tools
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=latest_user_message,
+            config=config,
         )
-        print("[DEBUG] --- MINIMAL TOOLS GEMINI RAW RESPONSE ---")
-        print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-        print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-        print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-        print("[DEBUG] --- END MINIMAL TOOLS GEMINI RAW RESPONSE ---")
-        raise Exception("DEBUG_BREAK_AFTER_MINIMAL_TOOLS_GEMINI_RESPONSE")
+        print("[DEBUG] --- GENAI FUNCTION CALL RAW RESPONSE ---")
+        print(f"[DEBUG] response (str): {str(response)}")
+        print(f"[DEBUG] response type: {type(response)}")
+        print(f"[DEBUG] response (repr): {repr(response)}")
+        print("[DEBUG] --- END GENAI FUNCTION CALL RAW RESPONSE ---")
+        # You can parse response.candidates[0].content.parts[0].function_call if needed
+        raise Exception("DEBUG_BREAK_AFTER_GENAI_FUNCTION_CALL")
     except Exception as e:
         print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
+        import traceback
         traceback.print_exc()
-        if 'gatekeeper_response' in locals():
-            print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
-            try:
-                print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-                print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-                print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-            except Exception as print_exc:
-                print(f"[DEBUG] Exception while printing gatekeeper_response: {print_exc}")
-            print("[DEBUG] --- END GEMINI RESPONSE ON EXCEPTION ---")
         intent = ChatIntent.OUT_OF_SCOPE
 
     # --- Router ---
