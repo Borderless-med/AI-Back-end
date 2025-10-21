@@ -1,3 +1,6 @@
+print("google.genai attributes:", dir(genai))
+import pkg_resources
+print("google-genai version:", pkg_resources.get_distribution("google-genai").version)
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
