@@ -261,58 +261,70 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- Reactivated Gemini tools/function-calling code ---
     try:
         try:
-            gatekeeper_response = gatekeeper_model.generate_content(
-                [{"role": "user", "parts": [latest_user_message]}],
-                tools=[
-                    {
-                        "name": "classify_intent",
-                        "description": "Classifies the user's intent for dental chatbot routing.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "intent": {
-                                    "type": "string",
-                                    "enum": [
-                                        "find_clinic",
-                                        "book_appointment",
-                                        "general_dental_question",
-                                        "remember_session",
-                                        "out_of_scope"
-                                    ],
-                                    "description": "The classified intent of the user's query."
-                                }
-                            },
-                            "required": ["intent"]
-                        }
-                    }
-                ]
-            )
             import json
-            print("[DEBUG] --- FULL RAW GEMINI RESPONSE ---")
             try:
+                gatekeeper_response = gatekeeper_model.generate_content(
+                    [{"role": "user", "parts": [latest_user_message]}],
+                    tools=[
+                        {
+                            "name": "classify_intent",
+                            "description": "Classifies the user's intent for dental chatbot routing.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "intent": {
+                                        "type": "string",
+                                        "enum": [
+                                            "find_clinic",
+                                            "book_appointment",
+                                            "general_dental_question",
+                                            "remember_session",
+                                            "out_of_scope"
+                                        ],
+                                        "description": "The classified intent of the user's query."
+                                    }
+                                },
+                                "required": ["intent"]
+                            }
+                        }
+                    ]
+                )
+                print("[DEBUG] --- FULL RAW GEMINI RESPONSE ---")
                 print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
                 print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
                 if hasattr(gatekeeper_response, 'to_dict'):
                     print(f"[DEBUG] gatekeeper_response (to_dict): {json.dumps(gatekeeper_response.to_dict(), indent=2)}")
-                elif isinstance(gatekeeper_response, dict):
-                    print(f"[DEBUG] gatekeeper_response (dict): {json.dumps(gatekeeper_response, indent=2)}")
-                else:
-                    print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-            except Exception as print_exc:
-                print(f"[DEBUG] Exception while printing Gemini response: {print_exc}")
-            print("[DEBUG] --- END FULL RAW GEMINI RESPONSE ---")
-            # Now, try to access the intent in a defensive way
-            try:
-                # Example: print all keys if it's a dict
-                if hasattr(gatekeeper_response, 'to_dict'):
                     resp_dict = gatekeeper_response.to_dict()
                     print(f"[DEBUG] gatekeeper_response keys: {list(resp_dict.keys())}")
                 elif isinstance(gatekeeper_response, dict):
+                    print(f"[DEBUG] gatekeeper_response (dict): {json.dumps(gatekeeper_response, indent=2)}")
                     print(f"[DEBUG] gatekeeper_response keys: {list(gatekeeper_response.keys())}")
-            except Exception as key_exc:
-                print(f"[DEBUG] Exception while accessing keys: {key_exc}")
-            # Do not parse anything yet, just print and raise to see the log
-            raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
+                else:
+                    print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+                print("[DEBUG] --- END FULL RAW GEMINI RESPONSE ---")
+                # Do not parse anything yet, just print and raise to see the log
+                raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
+            except Exception as exc:
+                print(f"[DEBUG] Gemini API call exception: {exc}")
+                print(f"[DEBUG] Gemini API call exception type: {type(exc)}")
+                if 'gatekeeper_response' in locals():
+                    print("[DEBUG] --- FULL RAW GEMINI RESPONSE (ON EXCEPTION) ---")
+                    try:
+                        print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+                        print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+                        if hasattr(gatekeeper_response, 'to_dict'):
+                            print(f"[DEBUG] gatekeeper_response (to_dict): {json.dumps(gatekeeper_response.to_dict(), indent=2)}")
+                            resp_dict = gatekeeper_response.to_dict()
+                            print(f"[DEBUG] gatekeeper_response keys: {list(resp_dict.keys())}")
+                        elif isinstance(gatekeeper_response, dict):
+                            print(f"[DEBUG] gatekeeper_response (dict): {json.dumps(gatekeeper_response, indent=2)}")
+                            print(f"[DEBUG] gatekeeper_response keys: {list(gatekeeper_response.keys())}")
+                        else:
+                            print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+                    except Exception as print_exc:
+                        print(f"[DEBUG] Exception while printing Gemini response (on exception): {print_exc}")
+                    print("[DEBUG] --- END FULL RAW GEMINI RESPONSE (ON EXCEPTION) ---")
+                raise
         except Exception as api_exc:
             print(f"[DEBUG] Gemini API call exception: {api_exc}")
             print(f"[DEBUG] Gemini API call exception type: {type(api_exc)}")
