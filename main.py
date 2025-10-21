@@ -287,16 +287,20 @@ async def handle_chat(request: Request, query: UserQuery):
                 }
             ]
         )
-        # Print the raw Gemini response immediately after the API call
-        print("[DEBUG] --- IMMEDIATE RAW GEMINI RESPONSE ---")
-        print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-        print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-        print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-        print("[DEBUG] --- END IMMEDIATE RAW GEMINI RESPONSE ---")
         # Do not parse anything yet, just print and raise to see the log
         raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
     except Exception as e:
-        print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
+        print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
+        # Try to print any available Gemini response
+        if 'gatekeeper_response' in locals():
+            print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
+            try:
+                print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+                print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+                print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+            except Exception as print_exc:
+                print(f"[DEBUG] Exception while printing gatekeeper_response: {print_exc}")
+            print("[DEBUG] --- END GEMINI RESPONSE ON EXCEPTION ---")
         intent = ChatIntent.OUT_OF_SCOPE
 
     # --- Router ---
