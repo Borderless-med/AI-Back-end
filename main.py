@@ -1,10 +1,14 @@
-print("client methods:", dir(client))
-print("client.models methods:", dir(client.models))
 import google.genai as genai
-print("google.genai attributes:", dir(genai))
 import os
+
+print("google.genai attributes:", dir(genai))
+
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=GOOGLE_API_KEY)
+
+print("client methods:", dir(client))
+print("client.models methods:", dir(client.models))
+
 # Minimal Gemini API call for debugging
 response = client.generate_content(
     prompt="Hello Gemini, are you working?",
