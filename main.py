@@ -1,7 +1,7 @@
 import sys
 print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
-import google.generativeai as genai
+import google.genai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
