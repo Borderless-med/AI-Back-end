@@ -1,4 +1,3 @@
-print("google.genai attributes:", dir(genai))
 import google.genai as genai
 print("google.genai attributes:", dir(genai))
 import sys
