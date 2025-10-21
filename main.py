@@ -59,7 +59,7 @@ from flows.remember_flow import handle_remember_session
 # --- Load environment variables and configure clients ---
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
-gemini_model = genai.GeminiPro(api_key=gemini_api_key)
+gemini_model = genai.GenerativeModel("gemini-pro")
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
