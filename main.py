@@ -10,9 +10,9 @@ print("client methods:", dir(client))
 print("client.models methods:", dir(client.models))
 
 # Minimal Gemini API call for debugging
-response = client.generate_content(
-    prompt="Hello Gemini, are you working?",
-    model="gemini-pro"
+response = client.models.generate_content(
+    model="gemini-pro",
+    prompt="Hello Gemini, are you working?"
 )
 print("Gemini response:", response)
 from dotenv import load_dotenv
