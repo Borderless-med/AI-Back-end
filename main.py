@@ -288,10 +288,10 @@ async def handle_chat(request: Request, query: UserQuery):
                 ]
             )
             import json
+            print("[DEBUG] --- FULL RAW GEMINI RESPONSE ---")
             try:
-                print(f"[DEBUG] Raw gatekeeper_response (str): {str(gatekeeper_response)}")
+                print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
                 print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-                # Try to print as JSON if possible
                 if hasattr(gatekeeper_response, 'to_dict'):
                     print(f"[DEBUG] gatekeeper_response (to_dict): {json.dumps(gatekeeper_response.to_dict(), indent=2)}")
                 elif isinstance(gatekeeper_response, dict):
@@ -300,6 +300,17 @@ async def handle_chat(request: Request, query: UserQuery):
                     print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
             except Exception as print_exc:
                 print(f"[DEBUG] Exception while printing Gemini response: {print_exc}")
+            print("[DEBUG] --- END FULL RAW GEMINI RESPONSE ---")
+            # Now, try to access the intent in a defensive way
+            try:
+                # Example: print all keys if it's a dict
+                if hasattr(gatekeeper_response, 'to_dict'):
+                    resp_dict = gatekeeper_response.to_dict()
+                    print(f"[DEBUG] gatekeeper_response keys: {list(resp_dict.keys())}")
+                elif isinstance(gatekeeper_response, dict):
+                    print(f"[DEBUG] gatekeeper_response keys: {list(gatekeeper_response.keys())}")
+            except Exception as key_exc:
+                print(f"[DEBUG] Exception while accessing keys: {key_exc}")
             # Do not parse anything yet, just print and raise to see the log
             raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
         except Exception as api_exc:
