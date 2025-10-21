@@ -3,8 +3,12 @@ print("google.genai attributes:", dir(genai))
 import os
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=GOOGLE_API_KEY)
-# List available models for debugging
-print("Available models:", client.models.list())
+# Minimal Gemini API call for debugging
+response = client.generate_content(
+    prompt="Hello Gemini, are you working?",
+    model="gemini-pro"
+)
+print("Gemini response:", response)
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
