@@ -1,3 +1,5 @@
+print("client methods:", dir(client))
+print("client.models methods:", dir(client.models))
 import google.genai as genai
 print("google.genai attributes:", dir(genai))
 import os
