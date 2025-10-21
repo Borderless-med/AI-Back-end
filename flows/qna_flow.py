@@ -1,4 +1,4 @@
-import google.generativeai as genai
+import google.genai as genai
 
 def handle_qna(latest_user_message: str, generation_model: genai.GenerativeModel):
     """
