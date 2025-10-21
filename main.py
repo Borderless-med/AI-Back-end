@@ -257,20 +257,68 @@ async def handle_chat(request: Request, query: UserQuery):
         logging.error(f"Failed to log user message to conversations: {e}")
     
     # --- Gatekeeper ---
-    intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
-    # --- Minimal Gemini call for debugging (no tools/function-calling) ---
+
+    # --- Minimal Gemini tools/function-calling schema ---
+    # [MARKDOWN_COMMENT_BEGIN]
+    # The following block is the previous minimal Gemini call (no tools/function-calling):
+    # import json
+    # try:
+    #     gatekeeper_response = gatekeeper_model.generate_content(
+    #         [{"role": "user", "parts": [latest_user_message]}]
+    #     )
+    #     print("[DEBUG] --- MINIMAL GEMINI RAW RESPONSE ---")
+    #     print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+    #     print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+    #     print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+    #     print("[DEBUG] --- END MINIMAL GEMINI RAW RESPONSE ---")
+    #     raise Exception("DEBUG_BREAK_AFTER_MINIMAL_GEMINI_RESPONSE")
+    # except Exception as e:
+    #     print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
+    #     if 'gatekeeper_response' in locals():
+    #         print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
+    #         try:
+    #             print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+    #             print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+    #             print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+    #         except Exception as print_exc:
+    #             print(f"[DEBUG] Exception while printing gatekeeper_response: {print_exc}")
+    #         print("[DEBUG] --- END GEMINI RESPONSE ON EXCEPTION ---")
+    #     intent = ChatIntent.OUT_OF_SCOPE
+    # [MARKDOWN_COMMENT_END]
+
+    # Minimal tools schema: one tool, two intents
     import json
+    minimal_tools = [
+        {
+            "name": "classify_intent",
+            "description": "Classify the user's message as either a general dental question or out of scope.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "intent": {
+                        "type": "string",
+                        "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
+                        "description": "The intent of the user's message."
+                    }
+                },
+                "required": ["intent"]
+            }
+        }
+    ]
     try:
         gatekeeper_response = gatekeeper_model.generate_content(
-            [{"role": "user", "parts": [latest_user_message]}]
+            [
+                {"role": "user", "parts": [latest_user_message]}
+            ],
+            tools=minimal_tools
         )
-        print("[DEBUG] --- MINIMAL GEMINI RAW RESPONSE ---")
+        print("[DEBUG] --- MINIMAL TOOLS GEMINI RAW RESPONSE ---")
         print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
         print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
         print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-        print("[DEBUG] --- END MINIMAL GEMINI RAW RESPONSE ---")
+        print("[DEBUG] --- END MINIMAL TOOLS GEMINI RAW RESPONSE ---")
         # Do not parse anything yet, just print and raise to see the log
-        raise Exception("DEBUG_BREAK_AFTER_MINIMAL_GEMINI_RESPONSE")
+        raise Exception("DEBUG_BREAK_AFTER_MINIMAL_TOOLS_GEMINI_RESPONSE")
     except Exception as e:
         print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
         if 'gatekeeper_response' in locals():
