@@ -1,6 +1,6 @@
 import json
 import string
-import google.generativeai as genai
+import google.genai as genai
 import numpy as np
 from numpy.linalg import norm
 from urllib.parse import urlencode
