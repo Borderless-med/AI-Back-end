@@ -258,40 +258,21 @@ async def handle_chat(request: Request, query: UserQuery):
     
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
-    # --- Reactivated Gemini tools/function-calling code ---
+    # --- Minimal Gemini call for debugging (no tools/function-calling) ---
     import json
     try:
         gatekeeper_response = gatekeeper_model.generate_content(
-            [{"role": "user", "parts": [latest_user_message]}],
-            tools=[
-                {
-                    "name": "classify_intent",
-                    "description": "Classifies the user's intent for dental chatbot routing.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "intent": {
-                                "type": "string",
-                                "enum": [
-                                    "find_clinic",
-                                    "book_appointment",
-                                    "general_dental_question",
-                                    "remember_session",
-                                    "out_of_scope"
-                                ],
-                                "description": "The classified intent of the user's query."
-                            }
-                        },
-                        "required": ["intent"]
-                    }
-                }
-            ]
+            [{"role": "user", "parts": [latest_user_message]}]
         )
+        print("[DEBUG] --- MINIMAL GEMINI RAW RESPONSE ---")
+        print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+        print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+        print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+        print("[DEBUG] --- END MINIMAL GEMINI RAW RESPONSE ---")
         # Do not parse anything yet, just print and raise to see the log
-        raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
+        raise Exception("DEBUG_BREAK_AFTER_MINIMAL_GEMINI_RESPONSE")
     except Exception as e:
         print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
-        # Try to print any available Gemini response
         if 'gatekeeper_response' in locals():
             print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
             try:
