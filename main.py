@@ -258,28 +258,7 @@ async def handle_chat(request: Request, query: UserQuery):
     
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
-    # --- Minimal Gemini API call for debugging ---
-    try:
-        minimal_response = gatekeeper_model.generate_content(
-            [{"role": "user", "parts": [latest_user_message]}]
-        )
-        import json
-        print(f"[DEBUG] Raw minimal Gemini response (str): {str(minimal_response)}")
-        print(f"[DEBUG] minimal_response type: {type(minimal_response)}")
-        if hasattr(minimal_response, 'to_dict'):
-            print(f"[DEBUG] minimal_response (to_dict): {json.dumps(minimal_response.to_dict(), indent=2)}")
-        elif isinstance(minimal_response, dict):
-            print(f"[DEBUG] minimal_response (dict): {json.dumps(minimal_response, indent=2)}")
-        else:
-            print(f"[DEBUG] minimal_response (repr): {repr(minimal_response)}")
-        # For now, do not parse anything, just print and raise to inspect
-        raise Exception("DEBUG_BREAK_AFTER_MINIMAL_GEMINI_RESPONSE")
-    except Exception as e:
-        print(f"Minimal Gemini Exception: {e}. Defaulting to OUT_OF_SCOPE.")
-        intent = ChatIntent.OUT_OF_SCOPE
-
-    '''
-    # --- Original gatekeeper_model code (deactivated for debugging) ---
+    # --- Reactivated Gemini tools/function-calling code ---
     try:
         try:
             gatekeeper_response = gatekeeper_model.generate_content(
@@ -330,7 +309,6 @@ async def handle_chat(request: Request, query: UserQuery):
     except Exception as e:
         print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
         intent = ChatIntent.OUT_OF_SCOPE
-    '''
 
     # --- Router ---
     response_data = {}
