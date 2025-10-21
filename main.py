@@ -1,3 +1,4 @@
+# DEBUG: Gemini minimal call test
 import google.genai as genai
 import os
 
