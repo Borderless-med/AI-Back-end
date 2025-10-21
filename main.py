@@ -1,9 +1,10 @@
 import google.genai as genai
 print("google.genai attributes:", dir(genai))
-import sys
-print(f"--- PYTHON VERSION CHECK --- : {sys.version}")
 import os
-import google.genai as genai
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+client = genai.Client(api_key=GOOGLE_API_KEY)
+# List available models for debugging
+print("Available models:", client.models.list())
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
