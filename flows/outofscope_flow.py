@@ -1,3 +1,11 @@
+import google.genai as genai
+import google.genai as genai
+import google.generativeai as genai
+def handle_out_of_scope(latest_user_message: str):
+    """
+    Handles out-of-scope user queries with a cost-effective keyword router.
+    """
+    print("Executing Out-of-Scope flow...")
 def handle_out_of_scope(latest_user_message: str):
     """
     Handles out-of-scope user queries with a cost-effective keyword router.
