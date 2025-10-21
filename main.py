@@ -10,10 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import jwt
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
+import os
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+client = genai.Client(api_key=GOOGLE_API_KEY)
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
-import logging
+gemini_model = client.models.get("gemini-pro")
 
 def get_user_id_from_jwt(request: Request):
     print("[DEBUG] Entered get_user_id_from_jwt")
