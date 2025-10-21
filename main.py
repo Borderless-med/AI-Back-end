@@ -259,43 +259,42 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- Gatekeeper ---
     intent = ChatIntent.OUT_OF_SCOPE # Default to a safe, cheap intent
     # --- Reactivated Gemini tools/function-calling code ---
+    import json
     try:
-        try:
-            import json
-            gatekeeper_response = gatekeeper_model.generate_content(
-                [{"role": "user", "parts": [latest_user_message]}],
-                tools=[
-                    {
-                        "name": "classify_intent",
-                        "description": "Classifies the user's intent for dental chatbot routing.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "intent": {
-                                    "type": "string",
-                                    "enum": [
-                                        "find_clinic",
-                                        "book_appointment",
-                                        "general_dental_question",
-                                        "remember_session",
-                                        "out_of_scope"
-                                    ],
-                                    "description": "The classified intent of the user's query."
-                                }
-                            },
-                            "required": ["intent"]
-                        }
+        gatekeeper_response = gatekeeper_model.generate_content(
+            [{"role": "user", "parts": [latest_user_message]}],
+            tools=[
+                {
+                    "name": "classify_intent",
+                    "description": "Classifies the user's intent for dental chatbot routing.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {
+                                "type": "string",
+                                "enum": [
+                                    "find_clinic",
+                                    "book_appointment",
+                                    "general_dental_question",
+                                    "remember_session",
+                                    "out_of_scope"
+                                ],
+                                "description": "The classified intent of the user's query."
+                            }
+                        },
+                        "required": ["intent"]
                     }
-                ]
-            )
-            # Print the raw Gemini response immediately after the API call
-            print("[DEBUG] --- IMMEDIATE RAW GEMINI RESPONSE ---")
-            print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-            print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-            print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-            print("[DEBUG] --- END IMMEDIATE RAW GEMINI RESPONSE ---")
-            # Do not parse anything yet, just print and raise to see the log
-            raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
+                }
+            ]
+        )
+        # Print the raw Gemini response immediately after the API call
+        print("[DEBUG] --- IMMEDIATE RAW GEMINI RESPONSE ---")
+        print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
+        print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
+        print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
+        print("[DEBUG] --- END IMMEDIATE RAW GEMINI RESPONSE ---")
+        # Do not parse anything yet, just print and raise to see the log
+        raise Exception("DEBUG_BREAK_AFTER_RAW_GATEKEEPER_RESPONSE")
     except Exception as e:
         print(f"Gatekeeper Exception: {e}. Defaulting to OUT_OF_SCOPE.")
         intent = ChatIntent.OUT_OF_SCOPE
