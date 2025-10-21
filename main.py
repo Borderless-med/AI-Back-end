@@ -287,21 +287,40 @@ async def handle_chat(request: Request, query: UserQuery):
     # [MARKDOWN_COMMENT_END]
 
     # Minimal tools schema: one tool, two intents
+
     import json
+    import traceback
+
+    # [MARKDOWN_COMMENT_BEGIN]
+    # Previous minimal tools schema (object):
+    # minimal_tools = [
+    #     {
+    #         "name": "classify_intent",
+    #         "description": "Classify the user's message as either a general dental question or out of scope.",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "intent": {
+    #                     "type": "string",
+    #                     "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
+    #                     "description": "The intent of the user's message."
+    #                 }
+    #             },
+    #             "required": ["intent"]
+    #         }
+    #     }
+    # ]
+    # [MARKDOWN_COMMENT_END]
+
+    # Step 2: Try a different minimal tools schema (parameters type: string)
     minimal_tools = [
         {
             "name": "classify_intent",
             "description": "Classify the user's message as either a general dental question or out of scope.",
             "parameters": {
-                "type": "object",
-                "properties": {
-                    "intent": {
-                        "type": "string",
-                        "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
-                        "description": "The intent of the user's message."
-                    }
-                },
-                "required": ["intent"]
+                "type": "string",
+                "enum": ["GENERAL_DENTAL_QUESTION", "OUT_OF_SCOPE"],
+                "description": "The intent of the user's message."
             }
         }
     ]
@@ -317,10 +336,10 @@ async def handle_chat(request: Request, query: UserQuery):
         print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
         print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
         print("[DEBUG] --- END MINIMAL TOOLS GEMINI RAW RESPONSE ---")
-        # Do not parse anything yet, just print and raise to see the log
         raise Exception("DEBUG_BREAK_AFTER_MINIMAL_TOOLS_GEMINI_RESPONSE")
     except Exception as e:
         print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
+        traceback.print_exc()
         if 'gatekeeper_response' in locals():
             print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
             try:
