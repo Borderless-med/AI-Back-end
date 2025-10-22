@@ -2,14 +2,15 @@
 import google.generativeai as genai
 import os
 
+import logging
+
 print("google.genai attributes:", dir(genai))
 print("[RENDER_DEPLOYMENT_TEST] This is a test to verify Render deployment. Timestamp: 2025-10-22")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-print("client methods:", dir(client))
-print("client.models methods:", dir(client.models))
+## Removed incorrect client usage
 
 # Minimal Gemini API call for debugging
 model = genai.GenerativeModel(model_name="gemini-pro")
