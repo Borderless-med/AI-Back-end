@@ -13,7 +13,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 ## Removed incorrect client usage
 
 # Minimal Gemini API call for debugging
-model = genai.GenerativeModel(model_name="gemini-pro")
+model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
 response = model.generate_content("Hello Gemini!")
 print("Gemini response:", response)
 from dotenv import load_dotenv
@@ -28,7 +28,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
-model = genai.GenerativeModel(model_name="gemini-pro")
+model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
 
 def get_user_id_from_jwt(request: Request):
     print("[DEBUG] Entered get_user_id_from_jwt")
@@ -76,24 +76,24 @@ from flows.remember_flow import handle_remember_session
 # --- Load environment variables and configure clients ---
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
-gemini_model = genai.GenerativeModel(model_name="gemini-pro")
+gemini_model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # This MUST be your service_role key
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Define AI Models (Centralized) ---
 # Use the most powerful and reliable model for the critical, multi-class Gatekeeper task.
-gatekeeper_model = genai.GenerativeModel('gemini-pro-latest')
+gatekeeper_model = genai.GenerativeModel('models/gemini-pro-latest')
 
 # Use the fast and cheap Flash model for the subsequent, simpler tasks.
-factual_brain_model = genai.GenerativeModel('gemini-flash-latest')
-ranking_brain_model = genai.GenerativeModel('gemini-flash-latest')
+factual_brain_model = genai.GenerativeModel('models/gemini-flash-latest')
+ranking_brain_model = genai.GenerativeModel('models/gemini-flash-latest')
 
 # The embedding model name is correct.
 embedding_model = 'models/embedding-001' 
 
 # Use the Flash model for the final, simple text generation.
-generation_model = genai.GenerativeModel('gemini-flash-latest')
+generation_model = genai.GenerativeModel('models/gemini-flash-latest')
 
 # --- Pydantic Data Models (Centralized) ---
 class ChatMessage(BaseModel):
