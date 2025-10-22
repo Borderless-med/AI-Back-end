@@ -6,7 +6,7 @@ print("google.genai attributes:", dir(genai))
 print("[RENDER_DEPLOYMENT_TEST] This is a test to verify Render deployment. Timestamp: 2025-10-22")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
 print("client methods:", dir(client))
 print("client.models methods:", dir(client.models))
@@ -23,7 +23,7 @@ from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 import os
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+## Removed incorrect client usage
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
@@ -317,7 +317,7 @@ async def handle_chat(request: Request, query: UserQuery):
         """Classifies the user's intent as GENERAL_DENTAL_QUESTION or OUT_OF_SCOPE."""
         return intent
 
-    client = genai.Client()
+    # Removed incorrect client usage
     config = types.GenerateContentConfig(
         tools=[classify_intent]
     )
