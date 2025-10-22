@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-google-genai==0.4.0
+google-generativeai==0.4.0
 python-dotenv
 supabase
 numpy
