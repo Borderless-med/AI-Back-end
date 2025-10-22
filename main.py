@@ -1,5 +1,5 @@
 # DEBUG: Gemini minimal call test
-import google.genai as genai
+import google.generativeai as genai
 import os
 
 print("google.genai attributes:", dir(genai))
