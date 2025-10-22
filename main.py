@@ -335,10 +335,10 @@ async def handle_chat(request: Request, query: UserQuery):
     #     # You can parse response.candidates[0].content.parts[0].function_call if needed
     #     raise Exception("DEBUG_BREAK_AFTER_GENAI_FUNCTION_CALL")
     # except Exception as e:
-        print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
-        import traceback
-        traceback.print_exc()
-        intent = ChatIntent.OUT_OF_SCOPE
+    print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
+    import traceback
+    traceback.print_exc()
+    intent = ChatIntent.OUT_OF_SCOPE
 
     # --- Router ---
     response_data = {}
