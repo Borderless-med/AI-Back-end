@@ -3,6 +3,7 @@ import google.genai as genai
 import os
 
 print("google.genai attributes:", dir(genai))
+print("[RENDER_DEPLOYMENT_TEST] This is a test to verify Render deployment. Timestamp: 2025-10-22")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -11,10 +12,8 @@ print("client methods:", dir(client))
 print("client.models methods:", dir(client.models))
 
 # Minimal Gemini API call for debugging
-response = client.models.generate_content(
-    model="gemini-pro",
-    prompt="Hello Gemini, are you working?"
-)
+model = client.models.get("gemini-pro")
+response = model.generate_content("Hello Gemini!")
 print("Gemini response:", response)
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -322,20 +321,20 @@ async def handle_chat(request: Request, query: UserQuery):
     config = types.GenerateContentConfig(
         tools=[classify_intent]
     )
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=latest_user_message,
-            config=config,
-        )
-        print("[DEBUG] --- GENAI FUNCTION CALL RAW RESPONSE ---")
-        print(f"[DEBUG] response (str): {str(response)}")
-        print(f"[DEBUG] response type: {type(response)}")
-        print(f"[DEBUG] response (repr): {repr(response)}")
-        print("[DEBUG] --- END GENAI FUNCTION CALL RAW RESPONSE ---")
-        # You can parse response.candidates[0].content.parts[0].function_call if needed
-        raise Exception("DEBUG_BREAK_AFTER_GENAI_FUNCTION_CALL")
-    except Exception as e:
+    # try:
+    #     response = client.models.generate_content(
+    #         model="gemini-2.5-pro",
+    #         contents=latest_user_message,
+    #         config=config,
+    #     )
+    #     print("[DEBUG] --- GENAI FUNCTION CALL RAW RESPONSE ---")
+    #     print(f"[DEBUG] response (str): {str(response)}")
+    #     print(f"[DEBUG] response type: {type(response)}")
+    #     print(f"[DEBUG] response (repr): {repr(response)}")
+    #     print("[DEBUG] --- END GENAI FUNCTION CALL RAW RESPONSE ---")
+    #     # You can parse response.candidates[0].content.parts[0].function_call if needed
+    #     raise Exception("DEBUG_BREAK_AFTER_GENAI_FUNCTION_CALL")
+    # except Exception as e:
         print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
         import traceback
         traceback.print_exc()
