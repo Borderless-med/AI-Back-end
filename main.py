@@ -5,8 +5,8 @@ import os
 print("google.genai attributes:", dir(genai))
 print("[RENDER_DEPLOYMENT_TEST] This is a test to verify Render deployment. Timestamp: 2025-10-22")
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-client = genai.Client(api_key=GOOGLE_API_KEY)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 print("client methods:", dir(client))
 print("client.models methods:", dir(client.models))
@@ -22,8 +22,8 @@ import jwt
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 import os
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-client = genai.Client(api_key=GOOGLE_API_KEY)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional

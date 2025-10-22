@@ -1,8 +1,17 @@
 ## Chat Summary (October 16, 2025)
+# Progress Summary (October 20, 2025)
 
 ### Key Decisions & Fixes
+- Backend migrated to JWT authentication; header and audience validation issues resolved.
+- Session and conversation logging confirmed working with Supabase.
+- Frontend and backend integration verified; Authorization header and CORS setup complete.
+- Gemini intent classification remains blocked: all queries default to "OUT_OF_SCOPE" due to a KeyError ('object') in Gemini API response parsing.
+- Upgraded `google-generativeai` to latest available version (0.8.5) and redeployed backend; issue persists.
 
 ### Outcomes
+- Add a minimal Gemini API call (no tools/function-calling) to isolate error source.
+- Print raw Gemini response before parsing.
+- Gradually reintroduce tools schema to pinpoint failure.
 
 ### Next Steps
 # Progress Update (Oct 14, 2025)
