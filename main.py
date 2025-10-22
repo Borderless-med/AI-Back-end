@@ -12,7 +12,7 @@ print("client methods:", dir(client))
 print("client.models methods:", dir(client.models))
 
 # Minimal Gemini API call for debugging
-model = client.models.get("gemini-pro")
+model = genai.GenerativeModel(model_name="gemini-pro")
 response = model.generate_content("Hello Gemini!")
 print("Gemini response:", response)
 from dotenv import load_dotenv
@@ -27,7 +27,7 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 from supabase import create_client, Client
 from enum import Enum
 from typing import List, Optional
-gemini_model = client.models.get("gemini-pro")
+model = genai.GenerativeModel(model_name="gemini-pro")
 
 def get_user_id_from_jwt(request: Request):
     print("[DEBUG] Entered get_user_id_from_jwt")
