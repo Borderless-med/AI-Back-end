@@ -1,101 +1,56 @@
-# DEBUG: Gemini minimal call test
-import google.generativeai as genai
-import os
+# ==============================================================================
+# Main FastAPI Application for the SG-JB Dental Chatbot
+# ==============================================================================
 
+import os
 import logging
-
-print("google.genai attributes:", dir(genai))
-print("[RENDER_DEPLOYMENT_TEST] This is a test to verify Render deployment. Timestamp: 2025-10-22")
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-
-## Removed incorrect client usage
-
-# Minimal Gemini API call for debugging
-model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
-response = model.generate_content("Hello Gemini!")
-print("Gemini response:", response)
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-import jwt
-from jwt import InvalidTokenError
-from pydantic import BaseModel, Field
-import os
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-## Removed incorrect client usage
-from supabase import create_client, Client
+from uuid import uuid4
 from enum import Enum
 from typing import List, Optional
-model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
 
-def get_user_id_from_jwt(request: Request):
-    print("[DEBUG] Entered get_user_id_from_jwt")
-    auth_header = request.headers.get('authorization')
-    print(f"[DEBUG] Authorization header: {auth_header}")
-    if not auth_header or not auth_header.startswith('Bearer '):
-        print("[ERROR] Missing or invalid Authorization header.")
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
-    token = auth_header.split(' ')[1]
-    jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
-    print(f"[DEBUG] JWT secret loaded: {jwt_secret is not None}")
-    try:
-        print(f"[DEBUG] Attempting to decode JWT: {token[:30]}...")
-        payload = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated"
-        )
-        print(f"[DEBUG] JWT decoded successfully: {payload}")
-        user_id = payload.get('sub')
-        if not user_id:
-            print("[ERROR] JWT missing sub claim.")
-            raise HTTPException(status_code=401, detail="JWT missing sub claim.")
-        return user_id
-    except jwt.ExpiredSignatureError:
-        print("[ERROR] JWT verification failed: Token has expired.")
-        raise HTTPException(status_code=401, detail="Token has expired.")
-    except jwt.InvalidTokenError as e:
-        print(f"[ERROR] JWT verification failed: Invalid token. Details: {e}")
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
-    except Exception as e:
-        print(f"[ERROR] Unexpected error during JWT decoding: {e}")
-        raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
-# Import conversation logging helper
+# --- THIS IS THE FIX ---
+# Load environment variables from the .env file immediately.
+# This MUST be one of the very first things the application does,
+# BEFORE any other local modules are imported that need these variables.
+load_dotenv()
+
+# --- Now we can safely import third-party libraries and our own modules ---
+import jwt
+from jwt import InvalidTokenError
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from supabase import create_client, Client
+
+# --- Import all models from our new, centralized Gemini Service ---
+# This import can only happen AFTER load_dotenv() has run.
+from src.services.gemini_service import (
+    gatekeeper_model,
+    factual_brain_model,
+    ranking_brain_model,
+    generation_model,
+    embedding_model_name,
+    booking_model,
+    qna_model,
+    outofscope_model,
+    remember_model
+)
+
+# --- Import all of our separated flow handlers and helpers ---
 from services.session_service import add_conversation_message
-
-# --- Import all five of our new, separated flow handlers ---
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
 from flows.outofscope_flow import handle_out_of_scope
 from flows.remember_flow import handle_remember_session
 
-# --- Load environment variables and configure clients ---
-load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-gemini_model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
+# --- Configure the Supabase client ---
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # This MUST be your service_role key
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Use the service_role key for admin actions
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- Define AI Models (Centralized) ---
-# Use the most powerful and reliable model for the critical, multi-class Gatekeeper task.
-gatekeeper_model = genai.GenerativeModel('models/gemini-pro-latest')
-
-# Use the fast and cheap Flash model for the subsequent, simpler tasks.
-factual_brain_model = genai.GenerativeModel('models/gemini-flash-latest')
-ranking_brain_model = genai.GenerativeModel('models/gemini-flash-latest')
-
-# The embedding model name is correct.
-embedding_model = 'models/embedding-001' 
-
-# Use the Flash model for the final, simple text generation.
-generation_model = genai.GenerativeModel('models/gemini-flash-latest')
-
-# --- Pydantic Data Models (Centralized) ---
+# --- Pydantic Data Models (API Request/Response Schemas) ---
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -108,10 +63,8 @@ class UserQuery(BaseModel):
     session_id: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
 
-# --- NEW: Pydantic model for the session restore endpoint ---
 class SessionRestoreQuery(BaseModel):
     session_id: str
-    user_id: str
 
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
@@ -120,20 +73,15 @@ class ChatIntent(str, Enum):
     REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
 
-class GatekeeperDecision(BaseModel):
-    intent: ChatIntent
-
+# --- FastAPI App Initialization and CORS Configuration ---
 app = FastAPI()
 
-# --- CORS configuration ---
 origins = [
-    "http://localhost:8080", # For your local development
-    "https://sg-smile-saver-git-feature-chatbot-login-wall-gsps-projects.vercel.app", # An old preview URL
-    "https://sg-smile-saver-git-main-gsps-projects-5403164b.vercel.app", # An old production URL
-    "https://sg-smile-saver-5rouwfubi-gsps-projects-5403164b.vercel.app", # The NEW URL from the error
-    "https://sg-smile-saver.vercel.app", # Your clean production URL
-    "https://www.sg-jb-dental.com", # Your final custom domain
-    "https://sg-smile-saver-git-jwt-migration-gsps-projects-5403164b.vercel.app" # CURRENT VERCEL DEPLOYMENT
+    "http://localhost:8080",
+    "https://sg-smile-saver.vercel.app", # Production URL
+    "https://www.sg-jb-dental.com",      # Custom Domain
+    # Add your specific Vercel preview deployment URL for testing:
+    "https://sg-smile-saver-git-feature-gemini-sdk-cleanup-gsps-projects.vercel.app" 
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -143,218 +91,144 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Session management helpers ---
-def create_session(user_id: str = None, initial_context: dict = None) -> Optional[str]:
-    from uuid import uuid4
-    session_id = str(uuid4())
-    state = initial_context or {}
+# --- Helper Functions (Authentication & Session Management) ---
+def get_user_id_from_jwt(request: Request):
+    auth_header = request.headers.get('authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    
+    token = auth_header.split(' ')[1]
+    jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
+    
     try:
-        supabase.table("sessions").insert({"session_id": session_id, "state": state, "user_id": user_id}).execute()
+        payload = jwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated"
+        )
+        user_id = payload.get('sub')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="JWT missing 'sub' claim.")
+        return user_id
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired.")
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+def create_session(user_id: str) -> Optional[str]:
+    session_id = str(uuid4())
+    try:
+        supabase.table("sessions").insert({"session_id": session_id, "state": {}, "user_id": user_id}).execute()
         return session_id
     except Exception as e:
         logging.error(f"Error creating session: {e}")
         return None
-def get_session(session_id: str, user_id: str = None) -> Optional[dict]:
-    try:
-        query = supabase.table("sessions").select("*").eq("session_id", session_id)
-        if user_id:
-            query = query.eq("user_id", user_id)
-        response = query.single().execute()
-        return response.data if response.data else None
 
-    except Exception as e:
-        logging.error(f"Error fetching session {session_id} (user_id={user_id}): {e}")
-        return None
-            
-def update_session(session_id: str, context: dict, conversation_history: list = None) -> bool:
+def get_session(session_id: str, user_id: str) -> Optional[dict]:
     try:
-        update_data = {"state": context}
-        if conversation_history:
-            update_data["context"] = conversation_history
-        print(f"[DEBUG] Updating session {session_id} with data: {update_data}")
-        result = supabase.table("sessions").update(update_data).eq("session_id", session_id).execute()
-        print(f"[DEBUG] Supabase update result: {result}")
-        return True
+        response = supabase.table("sessions").select("*").eq("session_id", session_id).eq("user_id", user_id).single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        logging.error(f"Error fetching session {session_id} for user {user_id}: {e}")
+        return None
+
+def update_session(session_id: str, context: dict, conversation_history: list):
+    try:
+        supabase.table("sessions").update({
+            "state": context,
+            "context": conversation_history
+        }).eq("session_id", session_id).execute()
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
-        return False
 
-RESET_KEYWORDS = ["never mind", "start over", "reset", "restart"]
-
+# --- API Endpoints ---
 @app.get("/")
 def read_root():
-    return {"message": "API is running"}
+    return {"message": "SG-JB Dental Chatbot API is running"}
 
-# --- NEW: Endpoint to restore session context ---
 @app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
-    print("[DEBUG] /restore_session endpoint called")
-    print(f"[DEBUG] Request headers: {dict(request.headers)}")
-    user_id = None
-    try:
-        user_id = get_user_id_from_jwt(request)
-        print(f"[DEBUG] user_id from JWT: {user_id}")
-    except Exception as e:
-        print(f"[DEBUG] Exception in get_user_id_from_jwt: {e}")
-        raise
-    print(f"Attempting to restore session {query.session_id} for user {user_id}")
-    try:
-        session = get_session(query.session_id, user_id=user_id)
-        if session:
-            print("Session found and user verified. Returning context.")
-            state = session.get("state") or {}
-            return {"success": True, "state": {
-                "applied_filters": state.get("applied_filters") or {},
-                "candidate_pool": state.get("candidate_pool") or [],
-                "booking_context": state.get("booking_context") or {}
-            }}
-        else:
-            print("Session not found or user mismatch.")
-            raise HTTPException(status_code=404, detail="Session not found or access denied.")
-    except Exception as e:
-        logging.error(f"Error restoring session {query.session_id} for user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to restore session.")
-
+    user_id = get_user_id_from_jwt(request)
+    session = get_session(query.session_id, user_id)
+    if session:
+        state = session.get("state") or {}
+        return {"success": True, "state": state}
+    else:
+        raise HTTPException(status_code=404, detail="Session not found or access denied.")
 
 @app.post("/chat")
 async def handle_chat(request: Request, query: UserQuery):
-    print("[DEBUG] /chat endpoint called")
     user_id = get_user_id_from_jwt(request)
-    print(f"[DEBUG] user_id from JWT: {user_id}")
-    if not user_id:
-        print("[ERROR] No user_id returned from JWT decode.")
-        raise HTTPException(status_code=401, detail="Authentication required. Please sign in to use the chatbot.")
 
-    # --- API Limiter (optional, can be expanded) ---
-    try:
-        # Example: get API call count (can be expanded as needed)
-        response = supabase.rpc('get_user_api_calls', {'user_id_input': user_id}).execute()
-    except Exception as e:
-        logging.error(f"Error in API limiter for user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="An error occurred while verifying your access.")
-
-    # --- Session Management ---
+    # --- Session Initialization ---
     session_id = query.session_id
-    state = {"applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+    state = {}
     session = None
     if session_id:
-        session = get_session(session_id, user_id=user_id)
-        if session:
-            # Use the existing session
-            raw_state = session.get("state") or {}
-            state["applied_filters"] = raw_state.get("applied_filters") or {}
-            state["candidate_pool"] = raw_state.get("candidate_pool") or []
-            state["booking_context"] = raw_state.get("booking_context") or {}
-        else:
-            # Provided session_id is missing or not owned by user, create new session
-            session_id = create_session(user_id=user_id)
+        session = get_session(session_id, user_id)
+    
+    if session:
+        state = session.get("state") or {}
     else:
-        # No session_id provided, create new session
-        session_id = create_session(user_id=user_id)
+        session_id = create_session(user_id)
+        if not session_id:
+            raise HTTPException(status_code=500, detail="Could not create a new session.")
 
+    # --- Extract Latest Message and Context ---
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
+    latest_user_message = query.history[-1].content
+    previous_filters = state.get("applied_filters", {})
+    candidate_clinics = state.get("candidate_pool", [])
+    booking_context = state.get("booking_context", {})
 
-    latest_user_message = query.history[-1].content.lower()
-    previous_filters = state["applied_filters"]
-    candidate_clinics = state["candidate_pool"]
-    booking_context = state["booking_context"]
-
-    print(f"\n--- New Request ---")
-    print(f"Latest User Query: '{latest_user_message}'")
-
-    # Define conversation_history_for_prompt for downstream use
-    conversation_history_for_prompt = query.history
-
-    # Use gatekeeper_model to determine intent
-    # --- Log user message to conversations table ---
+    # --- Log User Message ---
     try:
-        add_conversation_message(supabase, query.user_id, "user", query.history[-1].content)
+        add_conversation_message(supabase, user_id, "user", latest_user_message)
     except Exception as e:
-        logging.error(f"Failed to log user message to conversations: {e}")
-    
-    # --- Gatekeeper ---
+        logging.error(f"Failed to log user message: {e}")
 
-    # --- Minimal Gemini tools/function-calling schema ---
-    # [MARKDOWN_COMMENT_BEGIN]
-    # The following block is the previous minimal Gemini call (no tools/function-calling):
-    # import json
-    # try:
-    #     gatekeeper_response = gatekeeper_model.generate_content(
-    #         [{"role": "user", "parts": [latest_user_message]}]
-    #     )
-    #     print("[DEBUG] --- MINIMAL GEMINI RAW RESPONSE ---")
-    #     print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-    #     print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-    #     print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-    #     print("[DEBUG] --- END MINIMAL GEMINI RAW RESPONSE ---")
-    #     raise Exception("DEBUG_BREAK_AFTER_MINIMAL_GEMINI_RESPONSE")
-    # except Exception as e:
-    #     print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
-    #     if 'gatekeeper_response' in locals():
-    #         print("[DEBUG] --- GEMINI RESPONSE ON EXCEPTION ---")
-    #         try:
-    #             print(f"[DEBUG] gatekeeper_response (str): {str(gatekeeper_response)}")
-    #             print(f"[DEBUG] gatekeeper_response type: {type(gatekeeper_response)}")
-    #             print(f"[DEBUG] gatekeeper_response (repr): {repr(gatekeeper_response)}")
-    #         except Exception as print_exc:
-    #             print(f"[DEBUG] Exception while printing gatekeeper_response: {print_exc}")
-    #         print("[DEBUG] --- END GEMINI RESPONSE ON EXCEPTION ---")
-    #     intent = ChatIntent.OUT_OF_SCOPE
-    # [MARKDOWN_COMMENT_END]
+    # --- Gatekeeper: Determine User Intent ---
+    intent = ChatIntent.OUT_OF_SCOPE # Default intent
+    try:
+        gatekeeper_prompt = f"""
+        Analyze the user's latest message and classify their intent.
+        User message: "{latest_user_message}"
+        Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
+        Respond with ONLY one of the possible intents, and nothing else.
+        """
+        response = gatekeeper_model.generate_content(gatekeeper_prompt)
+        
+        print(f"[DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
 
-    # Minimal tools schema: one tool, two intents
+        parsed_intent = response.text.strip().lower()
+        if parsed_intent in [e.value for e in ChatIntent]:
+            intent = ChatIntent(parsed_intent)
+        else:
+            print(f"[WARNING] Parsed intent '{parsed_intent}' not found in ChatIntent enum. Defaulting to OUT_OF_SCOPE.")
+            intent = ChatIntent.OUT_OF_SCOPE
 
+        print(f"[INFO] Gatekeeper FINAL classified intent as: {intent.value}")
 
-    # [MARKDOWN_COMMENT_BEGIN]
-    # Previous Gemini function-calling code using deprecated SDK is commented out above for reversibility.
-    # [MARKDOWN_COMMENT_END]
+    except Exception as e:
+        print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
+        intent = ChatIntent.OUT_OF_SCOPE
 
-    # --- NEW: Gemini function-calling using google-genai SDK ---
-    from google import genai
-    from google.genai import types
-
-    def classify_intent(intent: str):
-        """Classifies the user's intent as GENERAL_DENTAL_QUESTION or OUT_OF_SCOPE."""
-        return intent
-
-    # Removed incorrect client usage
-    config = types.GenerateContentConfig(
-        tools=[classify_intent]
-    )
-    # try:
-    #     response = client.models.generate_content(
-    #         model="gemini-2.5-pro",
-    #         contents=latest_user_message,
-    #         config=config,
-    #     )
-    #     print("[DEBUG] --- GENAI FUNCTION CALL RAW RESPONSE ---")
-    #     print(f"[DEBUG] response (str): {str(response)}")
-    #     print(f"[DEBUG] response type: {type(response)}")
-    #     print(f"[DEBUG] response (repr): {repr(response)}")
-    #     print("[DEBUG] --- END GENAI FUNCTION CALL RAW RESPONSE ---")
-    #     # You can parse response.candidates[0].content.parts[0].function_call if needed
-    #     raise Exception("DEBUG_BREAK_AFTER_GENAI_FUNCTION_CALL")
-    # except Exception as e:
-    print(f"Gatekeeper Exception: {e} (type: {type(e)}). Defaulting to OUT_OF_SCOPE.")
-    import traceback
-    traceback.print_exc()
-    intent = ChatIntent.OUT_OF_SCOPE
-
-    # --- Router ---
+    # --- Router: Route to the appropriate flow based on intent ---
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
         response_data = handle_find_clinic(
             latest_user_message=latest_user_message,
-            conversation_history=conversation_history_for_prompt,
+            conversation_history=query.history,
             previous_filters=previous_filters,
             candidate_clinics=candidate_clinics,
             factual_brain_model=factual_brain_model,
             ranking_brain_model=ranking_brain_model,
-            embedding_model=embedding_model,
+            embedding_model=embedding_model_name,
             generation_model=generation_model,
             supabase=supabase,
-            RESET_KEYWORDS=RESET_KEYWORDS
+            RESET_KEYWORDS=["reset", "start over"]
         )
     elif intent == ChatIntent.BOOK_APPOINTMENT:
         response_data = handle_booking_flow(
@@ -370,10 +244,8 @@ async def handle_chat(request: Request, query: UserQuery):
             generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
-        # Fix: Get the session data properly instead of relying on variable scope
-        session_data = get_session(session_id) if session_id else None
         response_data = handle_remember_session(
-            session=session_data,
+            session=session,
             latest_user_message=latest_user_message
         )
     elif intent == ChatIntent.OUT_OF_SCOPE:
@@ -381,36 +253,26 @@ async def handle_chat(request: Request, query: UserQuery):
     else:
         response_data = {"response": "I'm sorry, I'm not sure how to handle that."}
 
-    # Pass through context state for all flows
-    response_data["applied_filters"] = response_data.get("applied_filters", previous_filters)
-    response_data["candidate_pool"] = response_data.get("candidate_pool", candidate_clinics)
-    response_data["booking_context"] = response_data.get("booking_context", booking_context)
+    # --- Final Response Assembly and Session Update ---
+    if not isinstance(response_data, dict):
+        response_data = {"response": str(response_data)}
 
-    # --- Final Response Assembly ---
-    # Build new standardized state to persist
     new_state = {
         "applied_filters": response_data.get("applied_filters", previous_filters),
         "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
         "booking_context": response_data.get("booking_context", booking_context)
     }
     
-    if not isinstance(response_data, dict):
-        response_data = {"response": str(response_data)}
-    
-    # Build conversation history for persistence
-    conversation_history = []
-    for msg in query.history:
-        conversation_history.append({"role": msg.role, "content": msg.content})
-
-    # Add AI response to history and log to conversations table
+    updated_history = [msg.dict() for msg in query.history]
     if response_data.get("response"):
-        conversation_history.append({"role": "assistant", "content": response_data["response"]})
+        updated_history.append({"role": "assistant", "content": response_data["response"]})
         try:
-            add_conversation_message(supabase, query.user_id, "assistant", response_data["response"])
+            add_conversation_message(supabase, user_id, "assistant", response_data["response"])
         except Exception as e:
-            logging.error(f"Failed to log assistant message to conversations: {e}")
+            logging.error(f"Failed to log assistant message: {e}")
 
-    update_session(session_id, new_state, conversation_history)
+    update_session(session_id, new_state, updated_history)
+    
     response_data["session_id"] = session_id
 
     return response_data
