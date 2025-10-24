@@ -100,6 +100,10 @@ def get_user_id_from_jwt(request: Request):
     token = auth_header.split(' ')[1]
     jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
     
+     # --- REINSTATE THIS CRITICAL DEBUGGING LINE ---
+    print(f"[RENDER DEBUG] SUPABASE_JWT_SECRET loaded: {jwt_secret is not None}. Starts with: {jwt_secret[:4] if jwt_secret else 'None'}")
+
+
     try:
         payload = jwt.decode(
             token,
