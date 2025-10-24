@@ -1,6 +1,6 @@
-import google.generativeai as genai
 
-def handle_qna(latest_user_message: str, generation_model: genai.GenerativeModel):
+def handle_qna(latest_user_message: str, generation_model):
+    # generation_model should be an instance of genai.GenerativeModel, e.g. genai.GenerativeModel("gemini-pro")
     """
     Handles general dental health questions.
     """

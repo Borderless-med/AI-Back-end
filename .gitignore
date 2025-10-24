@@ -1,1 +1,17 @@
-.env
+.env              # Ignore environment variable files (secrets)
+__pycache__/      # Ignore Python cache folders
+*.pyc             # Ignore Python bytecode files
+*.pyo             # Ignore alternative Python bytecode files
+*.log             # Ignore log files
+*.sqlite3         # Ignore SQLite database files
+.vscode/          # Ignore VS Code workspace settings
+.idea/            # Ignore JetBrains IDE settings
+.DS_Store         # Ignore macOS Finder metadata
+*.egg-info/       # Ignore Python package metadata
+env/              # Ignore virtual environment folders
+venv/             # Ignore virtual environment folders
+build/            # Ignore build output
+dist/             # Ignore distribution packages
+*.bak             # Ignore backup files
+*.swp             # Ignore Vim swap files
+node_modules/     # Ignore Node.js dependencies (if present)
