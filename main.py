@@ -1,5 +1,5 @@
 # ==============================================================================
-# Main FastAPI Application for the SG-JB Dental Chatbot (REVISED)
+# Main FastAPI Application for the SG-JB Dental Chatbot (FINAL REVISION)
 # ==============================================================================
 
 import os
@@ -48,7 +48,7 @@ class SessionRestoreQuery(BaseModel):
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
-    CANCEL_BOOKING = "cancel_booking" # New deterministic intent
+    CANCEL_BOOKING = "cancel_booking"
     GENERAL_DENTAL_QUESTION = "general_dental_question"
     REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
@@ -177,7 +177,7 @@ async def handle_chat(request: Request, query: UserQuery):
     except Exception as e:
         logging.error(f"Failed to log user message: {e}")
 
-    # --- START: FIX FOR BOOKING CONFIRMATION ---
+    # --- START: THE FINAL FIX IS HERE ---
     intent = None
     if booking_context.get('status') == 'confirming_details':
         user_reply = latest_user_message.strip().lower()
@@ -189,6 +189,11 @@ async def handle_chat(request: Request, query: UserQuery):
         elif user_reply in negative_responses:
             print("[INFO] Deterministic Check: User cancelled booking. Forcing 'cancel_booking' intent.")
             intent = ChatIntent.CANCEL_BOOKING
+            
+    # THIS IS THE NEW PART THAT FIXES THE STALL
+    elif booking_context.get('status') == 'gathering_info':
+        print("[INFO] Deterministic Check: In 'gathering_info' state. Forcing 'book_appointment' intent.")
+        intent = ChatIntent.BOOK_APPOINTMENT
 
     # If the deterministic check didn't set an intent, use the Gatekeeper AI
     if intent is None:
@@ -208,7 +213,7 @@ async def handle_chat(request: Request, query: UserQuery):
         except Exception as e:
             print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
-    # --- END: FIX FOR BOOKING CONFIRMATION ---
+    # --- END OF THE FIX ---
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
