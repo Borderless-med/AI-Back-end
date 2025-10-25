@@ -89,6 +89,9 @@ app.add_middleware(
 
 # --- Helper Functions (Authentication & Session Management) ---
 def get_user_id_from_jwt(request: Request):
+    if request.method == "OPTIONS":
+        return
+    
     # --- HIGH-VISIBILITY DEBUGGING ---
     print("\n--- ENTERING JWT VALIDATION ---", flush=True)
     auth_header = request.headers.get('X-authorization')
