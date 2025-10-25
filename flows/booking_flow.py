@@ -34,7 +34,6 @@ def capture_user_info(latest_user_message, booking_context, previous_filters, ca
             function_call = user_info_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 user_args = function_call.args
-                # --- NOTE: You may want to update this to your production URL ---
                 base_url = "https://www.sg-jb-dental.com/book-now" 
                 clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
                 params = {
@@ -59,8 +58,29 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         print("In Booking Mode: Capturing user info...")
         return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
 
-    # --- STAGE 2: CONFIRMING DETAILS ---
+    # --- STAGE 2: CONFIRMING DETAILS (WITH NEW DETERMINISTIC LOGIC) ---
     if booking_context.get("status") == "confirming_details":
+        print("In Booking Mode: Processing user confirmation...")
+        
+        # --- START: DETERMINISTIC CHECK ---
+        user_reply = latest_user_message.strip().lower()
+        affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
+        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right']
+
+        if user_reply in affirmative_responses:
+            print("[DETERMINISTIC] User confirmed. Moving to gathering_info.")
+            booking_context["status"] = "gathering_info"
+            response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
+            return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
+        
+        if user_reply in negative_responses:
+            print("[DETERMINISTIC] User cancelled. Resetting flow.")
+            response_text = "My apologies. Let's start over. What can I help you with?"
+            return {"response": response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+        # --- END: DETERMINISTIC CHECK ---
+
+        # --- FALLBACK: If not a simple yes/no, let the AI try to figure out corrections ---
+        print("[AI FALLBACK] User response was not a simple yes/no. Checking for corrections.")
         try:
             # Check if user is trying to provide info directly instead of confirming
             pre_check_prompt = f'You are a JSON validation expert. Your only job is to determine if the user\'s message contains personal contact information. You MUST respond with a single, valid JSON object: {{"has_info": boolean}}.\nExamples:\n- User Message: "My name is John" -> Your Response: {{"has_info": true}}\n- User Message: "yes that is correct" -> Your Response: {{"has_info": false}}\nAnalyze this message: "{latest_user_message}"'
@@ -70,38 +90,28 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
                 print("In Booking Mode: User provided info directly. Capturing details...")
                 booking_context["status"] = "gathering_info"
                 return capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
-        except Exception as e:
-            print(f"Booking info pre-check failed: {e}")
 
-        print("In Booking Mode: Processing user confirmation...")
-        try:
             confirmation_response = factual_brain_model.generate_content(f"Analyze the user's reply for confirmation and corrections. Reply: '{latest_user_message}'", tools=[Confirmation])
             function_call = confirmation_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 confirm_args = function_call.args
-                if confirm_args.get("is_confirmed"):
-                    booking_context["status"] = "gathering_info"
-                    response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
+                # Note: The is_confirmed check is now redundant due to our deterministic check, but we leave it for complex cases
+                if confirm_args.get("corrected_treatment") or confirm_args.get("corrected_clinic"):
+                    if confirm_args.get("corrected_treatment"): booking_context["treatment"] = confirm_args.get("corrected_treatment")
+                    if confirm_args.get("corrected_clinic"): booking_context["clinic_name"] = confirm_args.get("corrected_clinic")
+                    response_text = f"Got it, thank you for clarifying. So that's an appointment for **{booking_context['treatment']}** at **{booking_context['clinic_name']}**. Is that correct?"
                     return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
                 else:
-                    # Handle corrections or starting over
-                    if confirm_args.get("corrected_treatment") or confirm_args.get("corrected_clinic"):
-                        if confirm_args.get("corrected_treatment"): booking_context["treatment"] = confirm_args.get("corrected_treatment")
-                        if confirm_args.get("corrected_clinic"): booking_context["clinic_name"] = confirm_args.get("corrected_clinic")
-                        response_text = f"Got it, thank you for clarifying. So that's an appointment for **{booking_context['treatment']}** at **{booking_context['clinic_name']}**. Is that correct?"
-                        return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
-                    else:
-                        response_text = "My apologies. Let's start over. What can I help you with?"
-                        return {"response": response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+                    # If AI gets confused, it's safer to ask again
+                    raise ValueError("AI could not determine a correction.")
         except Exception as e:
-            print(f"Booking Confirmation Error: {e}")
+            print(f"Booking Confirmation Fallback Error: {e}")
             return {"response": "Sorry, I had a little trouble understanding. Please confirm with a 'yes' or 'no', or let me know what you'd like to change.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
         
     # --- STAGE 1: IDENTIFYING THE CLINIC ---
     print("Starting Booking Mode...")
     clinic_name = None
 
-    # --- NEW LOGIC: Check for positional references first ---
     if candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
         for word, index in pos_map.items():
@@ -114,7 +124,6 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
                     print(f"Positional reference '{word}' found, but index is out of bounds for candidate pool.")
                     pass
     
-    # --- FALLBACK LOGIC: If no positional reference was found, use the AI ---
     if not clinic_name:
         print("No positional reference found. Using AI to extract clinic name.")
         try:
@@ -125,7 +134,6 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         except Exception as e:
             print(f"Booking Intent Extraction Error: {e}")
 
-    # --- FINAL STEP: If we have a clinic name, proceed to confirmation ---
     if clinic_name:
         treatment = (previous_filters.get('services') or ["a consultation"])[0]
         new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment}
