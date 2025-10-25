@@ -9,10 +9,8 @@ from uuid import uuid4
 from enum import Enum
 from typing import List, Optional
 
-# --- THIS IS THE FIX ---
-# Load environment variables from the .env file immediately.
-# This MUST be one of the very first things the application does,
-# BEFORE any other local modules are imported that need these variables.
+# --- Load environment variables from the .env file immediately ---
+# This MUST be one of the very first things the application does.
 load_dotenv()
 
 # --- Now we can safely import third-party libraries and our own modules ---
@@ -24,7 +22,6 @@ from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
 # --- Import all models from our new, centralized Gemini Service ---
-# This import can only happen AFTER load_dotenv() has run.
 from src.services.gemini_service import (
     gatekeeper_model,
     factual_brain_model,
@@ -47,7 +44,7 @@ from flows.remember_flow import handle_remember_session
 
 # --- Configure the Supabase client ---
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Use the service_role key for admin actions
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # --- Pydantic Data Models (API Request/Response Schemas) ---
@@ -78,10 +75,9 @@ app = FastAPI()
 
 origins = [
     "http://localhost:8080",
-    "https://sg-smile-saver.vercel.app", # Production URL
-    "https://www.sg-jb-dental.com",      # Custom Domain
-    # Add your specific Vercel preview deployment URL for testing:
-    "https://sg-smile-saver-git-feature-gemini-sdk-cleanup-gsps-projects.vercel.app" 
+    "https://sg-smile-saver.vercel.app",
+    "https://www.sg-jb-dental.com",
+    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app" # URL for the new deploy-fix branch
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -93,32 +89,43 @@ app.add_middleware(
 
 # --- Helper Functions (Authentication & Session Management) ---
 def get_user_id_from_jwt(request: Request):
+    # --- HIGH-VISIBILITY DEBUGGING ---
+    print("\n--- ENTERING JWT VALIDATION ---", flush=True)
     auth_header = request.headers.get('authorization')
+    print(f"[JWT DEBUG] Auth header found: {auth_header is not None}", flush=True)
+
     if not auth_header or not auth_header.startswith('Bearer '):
+        print("[JWT ERROR] Header missing or invalid format.", flush=True)
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     
     token = auth_header.split(' ')[1]
     jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
     
-     # --- REINSTATE THIS CRITICAL DEBUGGING LINE ---
-    print(f"[RENDER DEBUG] SUPABASE_JWT_SECRET loaded: {jwt_secret is not None}. Starts with: {jwt_secret[:4] if jwt_secret else 'None'}")
-
-
+    print(f"[JWT DEBUG] SUPABASE_JWT_SECRET loaded: {jwt_secret is not None}. Starts with: {jwt_secret[:4] if jwt_secret else 'None'}", flush=True)
+    
     try:
+        print("[JWT DEBUG] Attempting to decode token...", flush=True)
         payload = jwt.decode(
             token,
             jwt_secret,
             algorithms=["HS256"],
             audience="authenticated"
         )
+        print("[JWT SUCCESS] Token decoded successfully.", flush=True)
         user_id = payload.get('sub')
         if not user_id:
+            print("[JWT ERROR] 'sub' claim missing from token.", flush=True)
             raise HTTPException(status_code=401, detail="JWT missing 'sub' claim.")
         return user_id
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as e:
+        print(f"[JWT ERROR] Token expired: {e}", flush=True)
         raise HTTPException(status_code=401, detail="Token has expired.")
     except jwt.InvalidTokenError as e:
+        print(f"[JWT ERROR] Invalid token: {e}", flush=True)
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    except Exception as e:
+        print(f"[JWT ERROR] An unexpected error occurred: {e}", flush=True)
+        raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
 
 def create_session(user_id: str) -> Optional[str]:
     session_id = str(uuid4())
@@ -163,7 +170,16 @@ async def restore_session(request: Request, query: SessionRestoreQuery):
 
 @app.post("/chat")
 async def handle_chat(request: Request, query: UserQuery):
-    user_id = get_user_id_from_jwt(request)
+    print("\n--- NEW /CHAT REQUEST RECEIVED ---", flush=True)
+    try:
+        user_id = get_user_id_from_jwt(request)
+        print(f"[INFO] JWT validation successful for user: {user_id}", flush=True)
+    except HTTPException as e:
+        print(f"[ERROR] Authentication failed with status {e.status_code}: {e.detail}", flush=True)
+        raise e
+    except Exception as e:
+        print(f"[FATAL ERROR] An unexpected error occurred in /chat endpoint: {e}", flush=True)
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
     # --- Session Initialization ---
     session_id = query.session_id
@@ -194,7 +210,7 @@ async def handle_chat(request: Request, query: UserQuery):
         logging.error(f"Failed to log user message: {e}")
 
     # --- Gatekeeper: Determine User Intent ---
-    intent = ChatIntent.OUT_OF_SCOPE # Default intent
+    intent = ChatIntent.OUT_OF_SCOPE
     try:
         gatekeeper_prompt = f"""
         Analyze the user's latest message and classify their intent.
@@ -203,18 +219,14 @@ async def handle_chat(request: Request, query: UserQuery):
         Respond with ONLY one of the possible intents, and nothing else.
         """
         response = gatekeeper_model.generate_content(gatekeeper_prompt)
-        
         print(f"[DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
-
         parsed_intent = response.text.strip().lower()
         if parsed_intent in [e.value for e in ChatIntent]:
             intent = ChatIntent(parsed_intent)
         else:
-            print(f"[WARNING] Parsed intent '{parsed_intent}' not found in ChatIntent enum. Defaulting to OUT_OF_SCOPE.")
+            print(f"[WARNING] Parsed intent '{parsed_intent}' not found. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
-
         print(f"[INFO] Gatekeeper FINAL classified intent as: {intent.value}")
-
     except Exception as e:
         print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
         intent = ChatIntent.OUT_OF_SCOPE
@@ -223,34 +235,25 @@ async def handle_chat(request: Request, query: UserQuery):
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
         response_data = handle_find_clinic(
-            latest_user_message=latest_user_message,
-            conversation_history=query.history,
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model,
-            ranking_brain_model=ranking_brain_model,
-            embedding_model=embedding_model_name,
-            generation_model=generation_model,
-            supabase=supabase,
-            RESET_KEYWORDS=["reset", "start over"]
+            latest_user_message=latest_user_message, conversation_history=query.history,
+            previous_filters=previous_filters, candidate_clinics=candidate_clinics,
+            factual_brain_model=factual_brain_model, ranking_brain_model=ranking_brain_model,
+            embedding_model=embedding_model_name, generation_model=generation_model,
+            supabase=supabase, RESET_KEYWORDS=["reset", "start over"]
         )
     elif intent == ChatIntent.BOOK_APPOINTMENT:
         response_data = handle_booking_flow(
-            latest_user_message=latest_user_message,
-            booking_context=booking_context,
-            previous_filters=previous_filters,
-            candidate_clinics=candidate_clinics,
+            latest_user_message=latest_user_message, booking_context=booking_context,
+            previous_filters=previous_filters, candidate_clinics=candidate_clinics,
             factual_brain_model=factual_brain_model
         )
     elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
         response_data = handle_qna(
-            latest_user_message=latest_user_message,
-            generation_model=generation_model
+            latest_user_message=latest_user_message, generation_model=generation_model
         )
     elif intent == ChatIntent.REMEMBER_SESSION:
         response_data = handle_remember_session(
-            session=session,
-            latest_user_message=latest_user_message
+            session=session, latest_user_message=latest_user_message
         )
     elif intent == ChatIntent.OUT_OF_SCOPE:
         response_data = handle_out_of_scope(latest_user_message)
@@ -260,13 +263,11 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- Final Response Assembly and Session Update ---
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
-
     new_state = {
         "applied_filters": response_data.get("applied_filters", previous_filters),
         "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
         "booking_context": response_data.get("booking_context", booking_context)
     }
-    
     updated_history = [msg.dict() for msg in query.history]
     if response_data.get("response"):
         updated_history.append({"role": "assistant", "content": response_data["response"]})
@@ -274,9 +275,7 @@ async def handle_chat(request: Request, query: UserQuery):
             add_conversation_message(supabase, user_id, "assistant", response_data["response"])
         except Exception as e:
             logging.error(f"Failed to log assistant message: {e}")
-
     update_session(session_id, new_state, updated_history)
-    
     response_data["session_id"] = session_id
 
     return response_data
