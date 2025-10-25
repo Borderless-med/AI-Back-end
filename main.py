@@ -1,5 +1,5 @@
 # ==============================================================================
-# Main FastAPI Application for the SG-JB Dental Chatbot
+# Main FastAPI Application for the SG-JB Dental Chatbot (REVISED)
 # ==============================================================================
 
 import os
@@ -9,11 +9,8 @@ from uuid import uuid4
 from enum import Enum
 from typing import List, Optional
 
-# --- Load environment variables from the .env file immediately ---
-# This MUST be one of the very first things the application does.
 load_dotenv()
 
-# --- Now we can safely import third-party libraries and our own modules ---
 import jwt
 from jwt import InvalidTokenError
 from fastapi import FastAPI, HTTPException, Request
@@ -21,20 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
-# --- Import all models from our new, centralized Gemini Service ---
-from src.services.gemini_service import (
-    gatekeeper_model,
-    factual_brain_model,
-    ranking_brain_model,
-    generation_model,
-    embedding_model_name,
-    booking_model,
-    qna_model,
-    outofscope_model,
-    remember_model
-)
-
-# --- Import all of our separated flow handlers and helpers ---
+from src.services.gemini_service import gatekeeper_model, factual_brain_model, ranking_brain_model, generation_model, embedding_model_name
 from services.session_service import add_conversation_message
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
@@ -42,12 +26,10 @@ from flows.qna_flow import handle_qna
 from flows.outofscope_flow import handle_out_of_scope
 from flows.remember_flow import handle_remember_session
 
-# --- Configure the Supabase client ---
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- Pydantic Data Models (API Request/Response Schemas) ---
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -66,18 +48,18 @@ class SessionRestoreQuery(BaseModel):
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
     BOOK_APPOINTMENT = "book_appointment"
+    CANCEL_BOOKING = "cancel_booking" # New deterministic intent
     GENERAL_DENTAL_QUESTION = "general_dental_question"
     REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
 
-# --- FastAPI App Initialization and CORS Configuration ---
 app = FastAPI()
 
 origins = [
     "http://localhost:8080",
     "https://sg-smile-saver.vercel.app",
     "https://www.sg-jb-dental.com",
-    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app" # URL for the new deploy-fix branch
+    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -87,12 +69,10 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-authorization"],
 )
 
-# --- Helper Functions (Authentication & Session Management) ---
 def get_user_id_from_jwt(request: Request):
     if request.method == "OPTIONS":
         return
     
-    # --- HIGH-VISIBILITY DEBUGGING ---
     print("\n--- ENTERING JWT VALIDATION ---", flush=True)
     auth_header = request.headers.get('X-authorization')
     print(f"[JWT DEBUG] Auth header found: {auth_header is not None}", flush=True)
@@ -108,12 +88,7 @@ def get_user_id_from_jwt(request: Request):
     
     try:
         print("[JWT DEBUG] Attempting to decode token...", flush=True)
-        payload = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated"
-        )
+        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], audience="authenticated")
         print("[JWT SUCCESS] Token decoded successfully.", flush=True)
         user_id = payload.get('sub')
         if not user_id:
@@ -149,14 +124,10 @@ def get_session(session_id: str, user_id: str) -> Optional[dict]:
 
 def update_session(session_id: str, context: dict, conversation_history: list):
     try:
-        supabase.table("sessions").update({
-            "state": context,
-            "context": conversation_history
-        }).eq("session_id", session_id).execute()
+        supabase.table("sessions").update({"state": context, "context": conversation_history}).eq("session_id", session_id).execute()
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
 
-# --- API Endpoints ---
 @app.get("/")
 def read_root():
     return {"message": "SG-JB Dental Chatbot API is running"}
@@ -184,21 +155,16 @@ async def handle_chat(request: Request, query: UserQuery):
         print(f"[FATAL ERROR] An unexpected error occurred in /chat endpoint: {e}", flush=True)
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
-    # --- Session Initialization ---
     session_id = query.session_id
-    state = {}
-    session = None
-    if session_id:
-        session = get_session(session_id, user_id)
-    
-    if session:
-        state = session.get("state") or {}
-    else:
+    session = get_session(session_id, user_id) if session_id else None
+    if not session:
         session_id = create_session(user_id)
         if not session_id:
             raise HTTPException(status_code=500, detail="Could not create a new session.")
+        state = {}
+    else:
+        state = session.get("state") or {}
 
-    # --- Extract Latest Message and Context ---
     if not query.history:
         return {"response": "Error: History is empty.", "session_id": session_id}
     latest_user_message = query.history[-1].content
@@ -206,64 +172,58 @@ async def handle_chat(request: Request, query: UserQuery):
     candidate_clinics = state.get("candidate_pool", [])
     booking_context = state.get("booking_context", {})
 
-    # --- Log User Message ---
     try:
         add_conversation_message(supabase, user_id, "user", latest_user_message)
     except Exception as e:
         logging.error(f"Failed to log user message: {e}")
 
-    # --- Gatekeeper: Determine User Intent ---
-    intent = ChatIntent.OUT_OF_SCOPE
-    try:
-        gatekeeper_prompt = f"""
-        Analyze the user's latest message and classify their intent.
-        User message: "{latest_user_message}"
-        Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
-        Respond with ONLY one of the possible intents, and nothing else.
-        """
-        response = gatekeeper_model.generate_content(gatekeeper_prompt)
-        print(f"[DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
-        parsed_intent = response.text.strip().lower()
-        if parsed_intent in [e.value for e in ChatIntent]:
-            intent = ChatIntent(parsed_intent)
-        else:
-            print(f"[WARNING] Parsed intent '{parsed_intent}' not found. Defaulting to OUT_OF_SCOPE.")
-            intent = ChatIntent.OUT_OF_SCOPE
-        print(f"[INFO] Gatekeeper FINAL classified intent as: {intent.value}")
-    except Exception as e:
-        print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
-        intent = ChatIntent.OUT_OF_SCOPE
+    # --- START: FIX FOR BOOKING CONFIRMATION ---
+    intent = None
+    if booking_context.get('status') == 'confirming_details':
+        user_reply = latest_user_message.strip().lower()
+        affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
+        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right']
+        if user_reply in affirmative_responses:
+            print("[INFO] Deterministic Check: User confirmed booking. Forcing 'book_appointment' intent.")
+            intent = ChatIntent.BOOK_APPOINTMENT
+        elif user_reply in negative_responses:
+            print("[INFO] Deterministic Check: User cancelled booking. Forcing 'cancel_booking' intent.")
+            intent = ChatIntent.CANCEL_BOOKING
 
-    # --- Router: Route to the appropriate flow based on intent ---
+    # If the deterministic check didn't set an intent, use the Gatekeeper AI
+    if intent is None:
+        try:
+            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.
+            User message: "{latest_user_message}"
+            Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
+            Respond with ONLY one of the possible intents, and nothing else."""
+            response = gatekeeper_model.generate_content(gatekeeper_prompt)
+            print(f"[DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
+            parsed_intent = response.text.strip().lower()
+            if parsed_intent in [e.value for e in ChatIntent]:
+                intent = ChatIntent(parsed_intent)
+            else:
+                intent = ChatIntent.OUT_OF_SCOPE
+            print(f"[INFO] Gatekeeper FINAL classified intent as: {intent.value}")
+        except Exception as e:
+            print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
+            intent = ChatIntent.OUT_OF_SCOPE
+    # --- END: FIX FOR BOOKING CONFIRMATION ---
+
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
-        response_data = handle_find_clinic(
-            latest_user_message=latest_user_message, conversation_history=query.history,
-            previous_filters=previous_filters, candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model, ranking_brain_model=ranking_brain_model,
-            embedding_model=embedding_model_name, generation_model=generation_model,
-            supabase=supabase, RESET_KEYWORDS=["reset", "start over"]
-        )
+        response_data = handle_find_clinic(latest_user_message, query.history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model_name, generation_model, supabase, ["reset", "start over"])
     elif intent == ChatIntent.BOOK_APPOINTMENT:
-        response_data = handle_booking_flow(
-            latest_user_message=latest_user_message, booking_context=booking_context,
-            previous_filters=previous_filters, candidate_clinics=candidate_clinics,
-            factual_brain_model=factual_brain_model
-        )
+        response_data = handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
+    elif intent == ChatIntent.CANCEL_BOOKING:
+        response_data = {"response": "Okay, I've cancelled that booking request. How else can I help you today?", "booking_context": {}}
     elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
-        response_data = handle_qna(
-            latest_user_message=latest_user_message, generation_model=generation_model
-        )
+        response_data = handle_qna(latest_user_message, generation_model)
     elif intent == ChatIntent.REMEMBER_SESSION:
-        response_data = handle_remember_session(
-            session=session, latest_user_message=latest_user_message
-        )
-    elif intent == ChatIntent.OUT_OF_SCOPE:
+        response_data = handle_remember_session(session, latest_user_message)
+    else: # OUT_OF_SCOPE
         response_data = handle_out_of_scope(latest_user_message)
-    else:
-        response_data = {"response": "I'm sorry, I'm not sure how to handle that."}
 
-    # --- Final Response Assembly and Session Update ---
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
     new_state = {

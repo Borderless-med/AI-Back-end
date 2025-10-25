@@ -123,6 +123,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if candidate_clinics:
         quality_gated_clinics = [c for c in candidate_clinics if c.get('rating', 0) >= 4.5 and c.get('reviews', 0) >= 30]
         print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
+        # --- FIX: THIS IS THE NEW, CORRECT SORTING LOGIC ---
+        # Step 2: Sort the qualified clinics by the quality standard (best first).
+        # We sort by rating (highest first), then by number of reviews (highest first) as a tie-breaker.
+        quality_gated_clinics.sort(key=lambda c: (c.get('rating', 0), c.get('reviews', 0)), reverse=True)
+        # --------------------------------------------------
+
+
         qualified_clinics = quality_gated_clinics
 
     top_clinics = []
