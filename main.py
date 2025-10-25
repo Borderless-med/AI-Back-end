@@ -84,14 +84,14 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-authorization"],
 )
 
 # --- Helper Functions (Authentication & Session Management) ---
 def get_user_id_from_jwt(request: Request):
     # --- HIGH-VISIBILITY DEBUGGING ---
     print("\n--- ENTERING JWT VALIDATION ---", flush=True)
-    auth_header = request.headers.get('authorization')
+    auth_header = request.headers.get('X-authorization')
     print(f"[JWT DEBUG] Auth header found: {auth_header is not None}", flush=True)
 
     if not auth_header or not auth_header.startswith('Bearer '):
