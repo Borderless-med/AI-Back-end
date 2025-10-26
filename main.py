@@ -133,7 +133,8 @@ def update_session(session_id: str, user_id: str, context: dict, conversation_hi
         supabase.table("sessions").update({
             "state": context,
             "context": conversation_history
-        }).eq("session_id", session_id).eq("user_id", user_id).execute() # REMARK: Added .eq("user_id", user_id)
+        # --- FIX: We now specify BOTH the session_id and user_id for the update ---
+        }).eq("session_id", session_id).eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
 
@@ -199,14 +200,11 @@ async def handle_chat(request: Request, query: UserQuery):
         affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
         negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right']
         if user_reply in affirmative_responses:
-            print("[INFO] Deterministic Check: User confirmed booking. Forcing 'book_appointment' intent.")
             intent = ChatIntent.BOOK_APPOINTMENT
         elif user_reply in negative_responses:
-            print("[INFO] Deterministic Check: User cancelled booking. Forcing 'cancel_booking' intent.")
             intent = ChatIntent.CANCEL_BOOKING
             
     elif booking_context.get('status') == 'gathering_info':
-        print("[INFO] Deterministic Check: In 'gathering_info' state. Forcing 'book_appointment' intent.")
         intent = ChatIntent.BOOK_APPOINTMENT
 
     if intent is None:
