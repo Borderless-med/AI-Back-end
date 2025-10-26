@@ -34,7 +34,7 @@ def capture_user_info(latest_user_message, booking_context, previous_filters, ca
             function_call = user_info_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 user_args = function_call.args
-                base_url = "https://www.sg-jb-dental.com/book-now" 
+                base_url = "https://sg-smile-saver.vercel.app/book-now"
                 clinic_name_safe = urlencode({'q': booking_context.get('clinic_name', '')})[2:]
                 params = {
                     'name': user_args.get('patient_name'), 'email': user_args.get('email_address'),

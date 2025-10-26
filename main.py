@@ -1,5 +1,5 @@
 # ==============================================================================
-# Main FastAPI Application for the SG-JB Dental Chatbot (FINAL REVISION)
+# Main FastAPI Application for the SG-JB Dental Chatbot (CORRECTED VERSION)
 # ==============================================================================
 
 import os
@@ -122,9 +122,18 @@ def get_session(session_id: str, user_id: str) -> Optional[dict]:
         logging.error(f"Error fetching session {session_id} for user {user_id}: {e}")
         return None
 
-def update_session(session_id: str, context: dict, conversation_history: list):
+# --- FIX #1: MODIFY THE update_session FUNCTION ---
+def update_session(session_id: str, user_id: str, context: dict, conversation_history: list):
+    """
+    REMARK: This function now accepts 'user_id' as an argument.
+    This makes the database update command more specific by proving ownership of the session,
+    which will fix the silent failure where session state was not being saved.
+    """
     try:
-        supabase.table("sessions").update({"state": context, "context": conversation_history}).eq("session_id", session_id).execute()
+        supabase.table("sessions").update({
+            "state": context,
+            "context": conversation_history
+        }).eq("session_id", session_id).eq("user_id", user_id).execute() # REMARK: Added .eq("user_id", user_id)
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
 
@@ -146,8 +155,11 @@ async def restore_session(request: Request, query: SessionRestoreQuery):
 async def handle_chat(request: Request, query: UserQuery):
     print("\n--- NEW /CHAT REQUEST RECEIVED ---", flush=True)
     try:
-        user_id = get_user_id_from_jwt(request)
-        print(f"[INFO] JWT validation successful for user: {user_id}", flush=True)
+        # --- FIX #2: RENAME user_id to secure_user_id FOR CLARITY ---
+        # REMARK: This variable is the single source of truth for the user's identity,
+        # derived securely from the JWT. We will use this variable for all database operations.
+        secure_user_id = get_user_id_from_jwt(request)
+        print(f"[INFO] JWT validation successful for user: {secure_user_id}", flush=True)
     except HTTPException as e:
         print(f"[ERROR] Authentication failed with status {e.status_code}: {e.detail}", flush=True)
         raise e
@@ -156,9 +168,11 @@ async def handle_chat(request: Request, query: UserQuery):
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
     session_id = query.session_id
-    session = get_session(session_id, user_id) if session_id else None
+    # REMARK: Using the secure_user_id to fetch the session.
+    session = get_session(session_id, secure_user_id) if session_id else None
     if not session:
-        session_id = create_session(user_id)
+        # REMARK: Using the secure_user_id to create a new session.
+        session_id = create_session(secure_user_id)
         if not session_id:
             raise HTTPException(status_code=500, detail="Could not create a new session.")
         state = {}
@@ -173,11 +187,12 @@ async def handle_chat(request: Request, query: UserQuery):
     booking_context = state.get("booking_context", {})
 
     try:
-        add_conversation_message(supabase, user_id, "user", latest_user_message)
+        # REMARK: Using the secure_user_id to log the message.
+        add_conversation_message(supabase, secure_user_id, "user", latest_user_message)
     except Exception as e:
         logging.error(f"Failed to log user message: {e}")
 
-    # --- START: THE FINAL FIX IS HERE ---
+    # --- Router Logic (This section already contains the necessary fixes) ---
     intent = None
     if booking_context.get('status') == 'confirming_details':
         user_reply = latest_user_message.strip().lower()
@@ -190,12 +205,10 @@ async def handle_chat(request: Request, query: UserQuery):
             print("[INFO] Deterministic Check: User cancelled booking. Forcing 'cancel_booking' intent.")
             intent = ChatIntent.CANCEL_BOOKING
             
-    # THIS IS THE NEW PART THAT FIXES THE STALL
     elif booking_context.get('status') == 'gathering_info':
         print("[INFO] Deterministic Check: In 'gathering_info' state. Forcing 'book_appointment' intent.")
         intent = ChatIntent.BOOK_APPOINTMENT
 
-    # If the deterministic check didn't set an intent, use the Gatekeeper AI
     if intent is None:
         try:
             gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.
@@ -213,7 +226,6 @@ async def handle_chat(request: Request, query: UserQuery):
         except Exception as e:
             print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
-    # --- END OF THE FIX ---
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
@@ -240,10 +252,16 @@ async def handle_chat(request: Request, query: UserQuery):
     if response_data.get("response"):
         updated_history.append({"role": "assistant", "content": response_data["response"]})
         try:
-            add_conversation_message(supabase, user_id, "assistant", response_data["response"])
+            # REMARK: Using the secure_user_id to log the assistant's message.
+            add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
         except Exception as e:
             logging.error(f"Failed to log assistant message: {e}")
-    update_session(session_id, new_state, updated_history)
+            
+    # --- FIX #3: THE FINAL, CRITICAL CHANGE ---
+    # REMARK: We now pass the 'secure_user_id' to our corrected 'update_session' function.
+    # This ensures the session state is saved correctly after every single turn.
+    update_session(session_id, secure_user_id, new_state, updated_history)
+    
     response_data["session_id"] = session_id
 
     return response_data
