@@ -1,5 +1,5 @@
 # ==============================================================================
-# Main FastAPI Application for the SG-JB Dental Chatbot (CORRECTED VERSION)
+# Main FastAPI Application for the SG-JB Dental Chatbot (FINAL CORRECTED VERSION)
 # ==============================================================================
 
 import os
@@ -122,18 +122,15 @@ def get_session(session_id: str, user_id: str) -> Optional[dict]:
         logging.error(f"Error fetching session {session_id} for user {user_id}: {e}")
         return None
 
-# --- FIX #1: MODIFY THE update_session FUNCTION ---
+# --- REMARK: THIS IS THE FIRST PART OF THE FIX ---
+# The function signature is changed to accept 'user_id'.
 def update_session(session_id: str, user_id: str, context: dict, conversation_history: list):
-    """
-    REMARK: This function now accepts 'user_id' as an argument.
-    This makes the database update command more specific by proving ownership of the session,
-    which will fix the silent failure where session state was not being saved.
-    """
     try:
+        # REMARK: The query is changed to include '.eq("user_id", user_id)'.
+        # This makes the update command specific enough to succeed.
         supabase.table("sessions").update({
             "state": context,
             "context": conversation_history
-        # --- FIX: We now specify BOTH the session_id and user_id for the update ---
         }).eq("session_id", session_id).eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
@@ -156,9 +153,7 @@ async def restore_session(request: Request, query: SessionRestoreQuery):
 async def handle_chat(request: Request, query: UserQuery):
     print("\n--- NEW /CHAT REQUEST RECEIVED ---", flush=True)
     try:
-        # --- FIX #2: RENAME user_id to secure_user_id FOR CLARITY ---
-        # REMARK: This variable is the single source of truth for the user's identity,
-        # derived securely from the JWT. We will use this variable for all database operations.
+        # REMARK: The variable is renamed to 'secure_user_id' for clarity. This is now the single source of truth.
         secure_user_id = get_user_id_from_jwt(request)
         print(f"[INFO] JWT validation successful for user: {secure_user_id}", flush=True)
     except HTTPException as e:
@@ -169,10 +164,9 @@ async def handle_chat(request: Request, query: UserQuery):
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
     session_id = query.session_id
-    # REMARK: Using the secure_user_id to fetch the session.
+    # REMARK: 'secure_user_id' is now used for all session operations.
     session = get_session(session_id, secure_user_id) if session_id else None
     if not session:
-        # REMARK: Using the secure_user_id to create a new session.
         session_id = create_session(secure_user_id)
         if not session_id:
             raise HTTPException(status_code=500, detail="Could not create a new session.")
@@ -188,12 +182,11 @@ async def handle_chat(request: Request, query: UserQuery):
     booking_context = state.get("booking_context", {})
 
     try:
-        # REMARK: Using the secure_user_id to log the message.
         add_conversation_message(supabase, secure_user_id, "user", latest_user_message)
     except Exception as e:
         logging.error(f"Failed to log user message: {e}")
 
-    # --- Router Logic (This section already contains the necessary fixes) ---
+    # --- Router Logic (This section is unchanged as it was already correct) ---
     intent = None
     if booking_context.get('status') == 'confirming_details':
         user_reply = latest_user_message.strip().lower()
@@ -241,23 +234,34 @@ async def handle_chat(request: Request, query: UserQuery):
 
     if not isinstance(response_data, dict):
         response_data = {"response": str(response_data)}
-    new_state = {
-        "applied_filters": response_data.get("applied_filters", previous_filters),
-        "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
-        "booking_context": response_data.get("booking_context", booking_context)
-    }
+        
+    # --- REMARK: THIS IS THE SECOND PART OF THE FIX ---
+    # This new block of logic intelligently decides what to save in the session state.
+    final_booking_context = response_data.get("booking_context", booking_context)
+    if final_booking_context.get("status") == "complete":
+        # If booking is complete, preserve the recommendations for memory, but clear the active booking.
+        new_state = {
+            "applied_filters": previous_filters,
+            "candidate_pool": candidate_clinics,
+            "booking_context": {} 
+        }
+    else:
+        # Otherwise, save the state as returned by the flow.
+        new_state = {
+            "applied_filters": response_data.get("applied_filters", previous_filters),
+            "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
+            "booking_context": final_booking_context
+        }
+
     updated_history = [msg.dict() for msg in query.history]
     if response_data.get("response"):
         updated_history.append({"role": "assistant", "content": response_data["response"]})
         try:
-            # REMARK: Using the secure_user_id to log the assistant's message.
             add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
         except Exception as e:
             logging.error(f"Failed to log assistant message: {e}")
             
-    # --- FIX #3: THE FINAL, CRITICAL CHANGE ---
-    # REMARK: We now pass the 'secure_user_id' to our corrected 'update_session' function.
-    # This ensures the session state is saved correctly after every single turn.
+    # REMARK: The call to update_session now correctly passes the 'secure_user_id'.
     update_session(session_id, secure_user_id, new_state, updated_history)
     
     response_data["session_id"] = session_id
