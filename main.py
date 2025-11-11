@@ -1,4 +1,8 @@
 from fastapi import Response
+# ...existing imports and code...
+app = FastAPI()
+
+# OPTIONS handler for /chat to fix CORS preflight
 @app.options("/chat")
 async def chat_options():
     return Response(status_code=200)
