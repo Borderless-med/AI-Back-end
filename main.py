@@ -59,7 +59,8 @@ origins = [
     "http://localhost:8080",
     "https://sg-smile-saver.vercel.app",
     "https://www.sg-jb-dental.com",
-    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app"
+    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app",
+    "https://sg-smile-saver-git-prototype-ui-gsps-projects-5403164b.vercel.app"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -220,7 +221,19 @@ async def handle_chat(request: Request, query: UserQuery):
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
-        response_data = handle_find_clinic(latest_user_message, query.history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model_name, generation_model, supabase, ["reset", "start over"])
+        response_data = handle_find_clinic(
+            latest_user_message,
+            query.history,
+            previous_filters,
+            candidate_clinics,
+            factual_brain_model,
+            ranking_brain_model,
+            embedding_model_name,
+            generation_model,
+            supabase,
+            ["reset", "start over"],
+            session_state=state
+        )
     elif intent == ChatIntent.BOOK_APPOINTMENT:
         response_data = handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
     elif intent == ChatIntent.CANCEL_BOOKING:
@@ -238,19 +251,23 @@ async def handle_chat(request: Request, query: UserQuery):
     # --- REMARK: THIS IS THE SECOND PART OF THE FIX ---
     # This new block of logic intelligently decides what to save in the session state.
     final_booking_context = response_data.get("booking_context", booking_context)
+    # pick up any state updates from flows (e.g., location_preference gate)
+    flow_state_update = response_data.get("state_update", {}) or {}
     if final_booking_context.get("status") == "complete":
         # If booking is complete, preserve the recommendations for memory, but clear the active booking.
         new_state = {
             "applied_filters": previous_filters,
             "candidate_pool": candidate_clinics,
-            "booking_context": {} 
+            "booking_context": {},
+            **{k: v for k, v in flow_state_update.items()}
         }
     else:
         # Otherwise, save the state as returned by the flow.
         new_state = {
             "applied_filters": response_data.get("applied_filters", previous_filters),
             "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
-            "booking_context": final_booking_context
+            "booking_context": final_booking_context,
+            **{k: v for k, v in flow_state_update.items()}
         }
 
     updated_history = [msg.dict() for msg in query.history]
