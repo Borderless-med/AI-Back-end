@@ -1,3 +1,7 @@
+from fastapi import Response
+@app.options("/chat")
+async def chat_options():
+    return Response(status_code=200)
 # ==============================================================================
 # Main FastAPI Application for the SG-JB Dental Chatbot (FINAL CORRECTED VERSION)
 # ==============================================================================
