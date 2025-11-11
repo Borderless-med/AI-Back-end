@@ -74,6 +74,12 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-authorization"],
 )
 
+from fastapi import Response
+
+@app.options("/chat")
+async def chat_options():
+    return Response(status_code=200)
+
 def get_user_id_from_jwt(request: Request):
     if request.method == "OPTIONS":
         return
