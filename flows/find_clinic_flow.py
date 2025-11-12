@@ -98,7 +98,12 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if not location_preference and search_intent_detected:
         state_update['awaiting_location'] = True
         return {
-            "response": "Before I tailor results: are you interested in Johor Bahru (JB), Singapore (SG), or both?",
+            "response": "Before I tailor results: which country are you interested in?",
+            "meta": {"type": "location_prompt", "options": [
+                {"key": "jb", "label": "Johor Bahru"},
+                {"key": "sg", "label": "Singapore"},
+                {"key": "both", "label": "Both"}
+            ]},
             "applied_filters": previous_filters,
             "candidate_pool": [],
             "booking_context": {},
@@ -108,7 +113,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # If no location AND no search intent yet, just gently encourage specification (do not force prompt)
     if not location_preference and not search_intent_detected:
         return {
-            "response": "Let me know a treatment you need (e.g., root canal, cleaning) or say you want to find a clinic—then I can help you narrow by location (JB vs SG).",
+            "response": "Let me know a treatment you need (e.g., root canal, cleaning) or say you want to find a clinic—then I can help you narrow by country (SG vs JB).",
             "applied_filters": previous_filters,
             "candidate_pool": [],
             "booking_context": {},
@@ -255,8 +260,21 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         }
     
     township_filter = final_filters.get('township')
-    if township_filter in ['jb', 'johor bahru']:
+    # Treat 'singapore' / 'sg' as country-level, not township. Route to SG table and drop township filter
+    if township_filter in ['singapore', 'sg']:
+        print("Detected Singapore as country-level; routing to SG clinics and removing township filter")
+        location_preference = 'sg'
+        state_update['location_preference'] = 'sg'
+        final_filters.pop('township', None)
+        township_filter = None
+        db_queries = [('sg_clinics', build_query_for_table('sg_clinics'))]
+    elif township_filter in ['jb', 'johor bahru']:
         print("Applying Metro JB filter...")
+        # Ensure we query JB table(s)
+        if location_preference != 'jb':
+            location_preference = 'jb'
+            state_update['location_preference'] = 'jb'
+            db_queries = [('clinics_data', build_query_for_table('clinics_data'))]
         for i, (name, q) in enumerate(db_queries):
             db_queries[i] = (name, q.eq('is_metro_jb', True))
     elif township_filter:

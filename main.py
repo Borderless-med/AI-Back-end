@@ -266,7 +266,7 @@ async def handle_chat(request: Request, query: UserQuery):
         if (ChatIntent.FIND_CLINIC.value in LOCATION_REQUIRED_INTENTS) and not location_pref and not pending_location:
             state["awaiting_location"] = True
             response_data = {
-                "response": "To tailor results: which area are you interested in?",
+                "response": "To tailor results: which country are you interested in?",
                 "meta": {"type": "location_prompt", "options": [
                     {"key": "jb", "label": "Johor Bahru"},
                     {"key": "sg", "label": "Singapore"},

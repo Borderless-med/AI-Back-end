@@ -11,9 +11,10 @@ supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
-embedding_model = 'models/gemini-embedding-001'
+# This is the correct, future-proof model
+embedding_model = 'models/gemini-embedding-001' 
 
-# --- Define the sentiment columns ---
+# --- Define the sentiment columns for the "Simple Recipe" ---
 SENTIMENT_MAPPING = {
     'sentiment_dentist_skill': 'highly skilled dentists',
     'sentiment_pain_management': 'gentle and painless treatment',
@@ -23,55 +24,53 @@ SENTIMENT_MAPPING = {
     'sentiment_convenience': 'convenient and on-time appointments'
 }
 
-def rebuild_all_embeddings():
-    print("Starting the SIMPLE RECIPE embedding rebuild process...")
+def generate_sg_embeddings():
+    print("Starting the SG Clinic embedding process...")
     
-    # 1. Fetch all clinics with the data needed for the recipe
+    # Fetch all SG clinics that do not have an embedding yet
     try:
-        # We no longer need the individual service columns for this recipe
         columns_to_select = "id, name, address, township, " + ", ".join(list(SENTIMENT_MAPPING.keys()))
-        response = supabase.table("clinics_data").select(columns_to_select).execute()
+        response = supabase.table("sg_clinics").select(columns_to_select).filter("embedding", "is", "null").execute()
         
         if not response.data:
-            print("No clinics found. Exiting."); return
+            print("All SG clinics are already embedded. Exiting."); return
         
         clinics = response.data
         total_clinics = len(clinics)
-        print(f"Found {total_clinics} clinics to process.")
+        print(f"Found {total_clinics} SG clinics that need to be embedded.")
     except Exception as e:
-        print(f"Error fetching clinics: {e}"); return
+        print(f"Error fetching SG clinics: {e}"); return
     
-    # 2. Process each clinic
+    # Process each clinic
     for i, clinic in enumerate(clinics):
         clinic_id = clinic['id']
         clinic_name = clinic['name']
         
         print(f"\n[{i+1}/{total_clinics}] Processing: {clinic_name} (ID: {clinic_id})")
         
-        # 3. Build the list of strengths from sentiment scores
+        # Build the text to be embedded using the recipe
         strengths = []
         for col, text in SENTIMENT_MAPPING.items():
-            if clinic.get(col) and clinic.get(col) >= 8.0:
+            if clinic.get(col, 0) and clinic.get(col, 0) >= 8.0:
                 strengths.append(text)
         strengths_text = ", ".join(strengths) if strengths else "providing a solid patient experience"
-
-        # 4. Create the new, simplified and consistent text content to be embedded
-        # This new recipe intentionally omits the specialized services to avoid semantic dilution.
         content_to_embed = f"""
         Clinic Name: {clinic.get('name', '')}.
         Location: {clinic.get('address', '')}, in the {clinic.get('township', '')} area.
-        This clinic offers a range of general and preventative dental services, including routine check-ups, professional cleaning, and scaling.
+        This clinic offers a range of general and preventative dental services.
         Based on patient reviews, this clinic is known for {strengths_text}.
         """
         
-        # 5. Generate the new embedding from Gemini
+        # Generate the embedding from Gemini
         try:
-            print("  - Generating new embedding from Gemini...")
+            print("  - Generating embedding from Gemini...")
             embedding_response = genai.embed_content(
                 model=embedding_model,
                 content=content_to_embed,
                 task_type="RETRIEVAL_DOCUMENT",
                 title=clinic_name,
+                # --- THE DEFINITIVE FIX ---
+                # This instruction forces the model to create a 768-dimension vector, matching the database.
                 output_dimensionality=768
             )
             new_embedding = embedding_response['embedding']
@@ -79,24 +78,21 @@ def rebuild_all_embeddings():
             print(f"  - ERROR generating embedding for '{clinic_name}': {e}")
             continue
 
-        # 6. Save the new embedding to Supabase
+        # Save the new embedding to Supabase
         try:
             print("  - Saving new embedding to Supabase...")
-            update_response = supabase.table("clinics_data").update({'embedding': new_embedding}).eq('id', clinic_id).execute()
-            
-            if update_response.data:
-                print(f"  -> SUCCESS: Simple Recipe embedding for '{clinic_name}' has been rebuilt and saved.")
-            else:
-                error_message = "Unknown error"
-                if hasattr(update_response, 'error') and update_response.error:
-                    error_message = update_response.error.message
-                print(f"  - WARNING: Update for '{clinic_name}' failed. Reason: {error_message}")
+            # Use the RPC helper function, which is the most robust method
+            supabase.rpc('update_clinic_embedding', {
+                'clinic_id_to_update': clinic_id,
+                'new_embedding': new_embedding
+            }).execute()
+            print(f"  -> SUCCESS: Embedding for '{clinic_name}' has been saved.")
         except Exception as e:
             print(f"  - ERROR saving embedding for '{clinic_name}': {e}")
 
         time.sleep(1.2)
         
-    print("\n--- SIMPLE RECIPE embedding rebuild process complete! ---")
+    print("\n--- SG Clinic embedding process complete! ---")
 
 if __name__ == "__main__":
-    rebuild_all_embeddings()
+    generate_sg_embeddings()
