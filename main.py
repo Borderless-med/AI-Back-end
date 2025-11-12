@@ -265,6 +265,13 @@ async def handle_chat(request: Request, query: UserQuery):
         location_pref = state.get("location_preference")
         pending_location = state.get("awaiting_location", False)
         inferred = normalize_location_terms(latest_user_message)
+        # If this looks like a fresh convo (first user turn) and no explicit location in text, ignore persisted location to avoid surprising auto-selection
+        is_first_turn = len(query.history) == 1 and query.history[0].role == "user"
+        if is_first_turn and not inferred:
+            if location_pref:
+                print("[INFO] Fresh turn detected. Clearing persisted location_preference to prompt user explicitly.")
+            state.pop("location_preference", None)
+            location_pref = None
         if inferred:
             state["location_preference"] = inferred
             location_pref = inferred

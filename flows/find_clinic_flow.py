@@ -90,6 +90,9 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
 
     if user_wants_to_reset:
         final_filters = current_filters; candidate_clinics = []
+        # Clear any persisted location so next search prompts again
+        state_update['location_preference'] = None
+        state_update['awaiting_location'] = False
     elif ('services' in current_filters and 'township' not in current_filters) or ('township' in current_filters and 'services' not in current_filters):
         final_filters = current_filters; candidate_clinics = []
     else:
