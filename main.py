@@ -3,6 +3,26 @@ from fastapi import Response
 app = FastAPI()
 
 # OPTIONS handler for /chat to fix CORS preflight
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from supabase import create_client, Client
+import os
+import logging
+from dotenv import load_dotenv
+from uuid import uuid4
+from enum import Enum
+from typing import List, Optional
+
+load_dotenv()
+
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key)
+
+app = FastAPI()
+
+# OPTIONS handler for /chat to fix CORS preflight
 @app.options("/chat")
 async def chat_options():
     return Response(status_code=200)
