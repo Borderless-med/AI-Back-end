@@ -75,6 +75,21 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 return svc
         return None
 
+    # Minimal township heuristics (helps when LLM misses simple "in/near X" phrases)
+    def heuristic_township_from_text(text: str) -> Optional[str]:
+        t = (text or '').lower()
+        # very simple patterns; we only use as a fallback when LLM returns nothing
+        for kw in [' near ', ' in ']:
+            if kw in t:
+                # take up to 3 tokens after the keyword as a loose area name guess
+                tail = t.split(kw, 1)[1].strip()
+                tokens = [tok.strip(string.punctuation) for tok in tail.split()]
+                guess = " ".join(tokens[:3]).strip()
+                # avoid capturing country words or empty
+                if guess and guess not in { 'singapore', 'sg', 'johor', 'jb', 'johor bahru' }:
+                    return guess
+        return None
+
     # If no service extracted, or extracted one conflicts with an obvious heuristic match, prefer heuristic
     heuristic_svc = heuristic_service_from_text(latest_user_message)
     if heuristic_svc:
@@ -82,9 +97,14 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             current_filters['services'] = [heuristic_svc]
             print(f"[Heuristic] Service set to '{heuristic_svc}' from user text fallback")
 
-    if 'township' in current_filters:
-        current_filters['township'] = current_filters['township'].rstrip(string.punctuation).lower()
-        print(f"Sanitized township to: '{current_filters['township']}'")
+    if 'township' in current_filters and current_filters['township']:
+        current_filters['township'] = current_filters['township'].rstrip(string.punctuation).strip()
+        print(f"Sanitized township to: '{current_filters['township'].lower()}'")
+    elif not current_filters.get('township'):
+        ht = heuristic_township_from_text(latest_user_message)
+        if ht:
+            current_filters['township'] = ht.rstrip(string.punctuation).strip()
+            print(f"[Heuristic] Township set to '{current_filters['township']}' from user text fallback")
 
     final_filters = {}
     user_wants_to_reset = any(keyword in latest_user_message for keyword in RESET_KEYWORDS)
@@ -294,14 +314,14 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     
     township_filter = final_filters.get('township')
     # Treat 'singapore' / 'sg' as country-level, not township. Route to SG table and drop township filter
-    if township_filter in ['singapore', 'sg']:
+    if township_filter and township_filter.lower() in ['singapore', 'sg']:
         print("Detected Singapore as country-level; routing to SG clinics and removing township filter")
         location_preference = 'sg'
         state_update['location_preference'] = 'sg'
         final_filters.pop('township', None)
         township_filter = None
         db_queries = [('sg_clinics', build_query_for_table('sg_clinics'))]
-    elif township_filter in ['jb', 'johor bahru']:
+    elif township_filter and township_filter.lower() in ['jb', 'johor bahru']:
         print("Applying Metro JB filter...")
         # Ensure we query JB table(s)
         if location_preference != 'jb':
@@ -311,9 +331,15 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         for i, (name, q) in enumerate(db_queries):
             db_queries[i] = (name, q.eq('is_metro_jb', True))
     elif township_filter:
-        print(f"Applying specific township filter: {township_filter}")
+        print(f"Applying fuzzy township filter: {township_filter}")
+        # Case-insensitive contains match to handle variants like 'Jurong' -> 'JURONG WEST', 'JURONG SPRING'
+        pattern = f"%{township_filter}%"
         for i, (name, q) in enumerate(db_queries):
-            db_queries[i] = (name, q.eq('township', township_filter))
+            try:
+                db_queries[i] = (name, q.ilike('township', pattern))
+            except Exception:
+                # Fallback if client doesn't support ilike; keep equality (may be restrictive)
+                db_queries[i] = (name, q.eq('township', township_filter))
 
     # After routing, attach normalized country into filters for consistency
     if location_preference:
@@ -335,6 +361,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             except Exception as e:
                 print(f"Database query error for table {name}: {e}")
         candidate_clinics = merged
+        # If a fuzzy township was requested, also apply a lightweight in-memory filter to township/address just in case
+        if township_filter:
+            tf_low = township_filter.lower()
+            filtered = [c for c in candidate_clinics if (c.get('township') and tf_low in str(c.get('township', '')).lower()) or (c.get('address') and tf_low in str(c.get('address', '')).lower())]
+            if filtered:
+                print(f"Fuzzy township post-filter reduced candidates from {len(candidate_clinics)} to {len(filtered)}")
+                candidate_clinics = filtered
         print(f"Found {len(candidate_clinics)} candidates after initial database filtering across {len(db_queries)} source(s).")
     except Exception as e:
         print(f"Database query error: {e}")
