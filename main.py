@@ -1,8 +1,3 @@
-from fastapi import Response
-# ...existing imports and code...
-app = FastAPI()
-
-# OPTIONS handler for /chat to fix CORS preflight
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -13,6 +8,8 @@ from dotenv import load_dotenv
 from uuid import uuid4
 from enum import Enum
 from typing import List, Optional
+import jwt
+from jwt import InvalidTokenError
 
 load_dotenv()
 
@@ -20,32 +17,15 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
+# Instantiate FastAPI app
 app = FastAPI()
 
 # OPTIONS handler for /chat to fix CORS preflight
 @app.options("/chat")
 async def chat_options():
     return Response(status_code=200)
-# ==============================================================================
-# Main FastAPI Application for the SG-JB Dental Chatbot (FINAL CORRECTED VERSION)
-# ==============================================================================
 
-import os
-import logging
-from dotenv import load_dotenv
-from uuid import uuid4
-from enum import Enum
-from typing import List, Optional
-
-load_dotenv()
-
-import jwt
-from jwt import InvalidTokenError
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from supabase import create_client, Client
-
+# Business logic imports (keep only these after initial setup)
 from src.services.gemini_service import gatekeeper_model, factual_brain_model, ranking_brain_model, generation_model, embedding_model_name
 from services.session_service import add_conversation_message
 from flows.find_clinic_flow import handle_find_clinic
@@ -53,10 +33,6 @@ from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
 from flows.outofscope_flow import handle_out_of_scope
 from flows.remember_flow import handle_remember_session
-
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
 
 class ChatMessage(BaseModel):
     role: str
@@ -81,8 +57,6 @@ class ChatIntent(str, Enum):
     REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
 
-app = FastAPI()
-
 origins = [
     "http://localhost:8080",
     "https://sg-smile-saver.vercel.app",
@@ -97,18 +71,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type", "X-authorization"],
 )
-
-from fastapi import Response
-
-@app.options("/chat")
-async def chat_options():
-    return Response(status_code=200)
-
-from fastapi import Response
-
-@app.options("/chat")
-async def chat_options():
-    return Response(status_code=200)
 
 def get_user_id_from_jwt(request: Request):
     if request.method == "OPTIONS":
