@@ -231,6 +231,8 @@ async def handle_chat(request: Request, query: UserQuery):
         state["booking_context"] = {}
         state["location_preference"] = None
         state["awaiting_location"] = True
+        # Mark that a hard reset is in effect so the next turn won't reuse pre-reset history
+        state["hard_reset_active"] = True
         response_data = {
             "response": "Let me restart your search — which country would you like to explore?",
             "meta": {"type": "location_prompt", "options": [
@@ -399,9 +401,15 @@ async def handle_chat(request: Request, query: UserQuery):
             if state.get("awaiting_location"):
                 previous_filters = {}
                 candidate_clinics = []
+            # If a hard reset was just performed, trim the history to avoid leaking pre-reset intents (e.g., old services)
+            effective_history = query.history
+            if state.get("hard_reset_active"):
+                print("[RESET] Hard reset is active — trimming conversation history for extraction to the latest turn only.")
+                effective_history = [query.history[-1]]  # Only the latest user message
+
             response_data = handle_find_clinic(
                 latest_user_message,
-                query.history,
+                effective_history,
                 previous_filters,
                 candidate_clinics,
                 factual_brain_model,
@@ -447,6 +455,10 @@ async def handle_chat(request: Request, query: UserQuery):
             "booking_context": final_booking_context,
             **{k: v for k, v in flow_state_update.items()}
         }
+
+        # Once we've handled the first post-reset turn, clear the hard reset flag so normal history can resume
+        if state.get("hard_reset_active"):
+            new_state["hard_reset_active"] = False
 
     updated_history = [msg.dict() for msg in query.history]
     if response_data.get("response"):
