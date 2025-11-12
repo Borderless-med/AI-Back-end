@@ -54,6 +54,33 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     except Exception as e:
         print(f"Factual Brain Error: {e}")
 
+    # Deterministic fallback for service extraction when LLM misses or is inconsistent
+    def heuristic_service_from_text(text: str) -> Optional[str]:
+        t = (text or '').lower()
+        patterns = [
+            (['root canal', 'endodontic'], 'root_canal'),
+            (['implant', 'dental implant'], 'dental_implant'),
+            (['cleaning', 'polish', 'scale', 'scaling'], 'scaling'),
+            (['whitening', 'bleaching'], 'teeth_whitening'),
+            (['crown', 'cap'], 'dental_crown'),
+            (['filling', 'tooth filling'], 'tooth_filling'),
+            (['braces', 'orthodontic'], 'braces'),
+            (['wisdom tooth', 'wisdom extraction'], 'wisdom_tooth'),
+            (['gum', 'periodontal'], 'gum_treatment'),
+            (['veneers'], 'veneers'),
+        ]
+        for keys, svc in patterns:
+            if any(k in t for k in keys):
+                return svc
+        return None
+
+    # If no service extracted, or extracted one conflicts with an obvious heuristic match, prefer heuristic
+    heuristic_svc = heuristic_service_from_text(latest_user_message)
+    if heuristic_svc:
+        if 'services' not in current_filters or (current_filters['services'] and current_filters['services'][0] != heuristic_svc):
+            current_filters['services'] = [heuristic_svc]
+            print(f"[Heuristic] Service set to '{heuristic_svc}' from user text fallback")
+
     if 'township' in current_filters:
         current_filters['township'] = current_filters['township'].rstrip(string.punctuation).lower()
         print(f"Sanitized township to: '{current_filters['township']}'")
@@ -366,6 +393,10 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         clean_clinic.pop('embedding_arr', None)
         clean_clinic['tags'] = derive_tags(clean_clinic)
         cleaned_candidate_pool.append(clean_clinic)
+
+    # Attach explicit country info for UI clarity
+    if location_preference:
+        final_filters['country'] = 'SG' if location_preference == 'sg' else ('MY' if location_preference == 'jb' else 'SG+MY')
 
     final_response_data = {
         "response": response_text, 

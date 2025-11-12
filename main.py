@@ -251,6 +251,14 @@ async def handle_chat(request: Request, query: UserQuery):
             print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
+    # Override misclassifications: if message clearly asks to find/recommend clinics, force FIND_CLINIC
+    if intent in {ChatIntent.GENERAL_DENTAL_QUESTION, ChatIntent.OUT_OF_SCOPE}:
+        lower_msg = latest_user_message.lower()
+        search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment"]
+        if any(k in lower_msg for k in search_triggers):
+            print("[INFO] Heuristic override: Detected strong search intent; forcing FIND_CLINIC")
+            intent = ChatIntent.FIND_CLINIC
+
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
         # LOCATION DECISION LAYER
