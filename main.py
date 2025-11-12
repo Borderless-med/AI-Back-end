@@ -57,6 +57,36 @@ class ChatIntent(str, Enum):
     REMEMBER_SESSION = "remember_session"
     OUT_OF_SCOPE = "out_of_scope"
 
+# --- Location & intent configuration additions ---
+LOCATION_REQUIRED_INTENTS = {
+    ChatIntent.FIND_CLINIC.value,
+    ChatIntent.BOOK_APPOINTMENT.value,
+    "get_price",
+    "opening_hours",
+    "cost",
+    "schedule"
+}
+
+SG_SYNONYMS = {
+    "singapore","sg","s'g","sin","sing","lion city","little red dot","singapura","local","home","here","this island"
+}
+JB_SYNONYMS = {
+    "johor bahru","johor","jb","j.b.","bahru","malaysia side","across the border","causeway","second link"
+}
+
+def normalize_location_terms(text: str) -> str | None:
+    if not text:
+        return None
+    t = text.lower()
+    # both present explicitly
+    if any(x in t for x in ["both","all","compare singapore and jb","sg and jb","jb and sg"]):
+        return "both"
+    if any(s in t for s in SG_SYNONYMS):
+        return "sg"
+    if any(s in t for s in JB_SYNONYMS):
+        return "jb"
+    return None
+
 origins = [
     "http://localhost:8080",
     "https://sg-smile-saver.vercel.app",
@@ -223,19 +253,49 @@ async def handle_chat(request: Request, query: UserQuery):
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
-        response_data = handle_find_clinic(
-            latest_user_message,
-            query.history,
-            previous_filters,
-            candidate_clinics,
-            factual_brain_model,
-            ranking_brain_model,
-            embedding_model_name,
-            generation_model,
-            supabase,
-            ["reset", "start over"],
-            session_state=state
-        )
+        # LOCATION DECISION LAYER
+        location_pref = state.get("location_preference")
+        pending_location = state.get("awaiting_location", False)
+        inferred = normalize_location_terms(latest_user_message)
+        if inferred:
+            state["location_preference"] = inferred
+            location_pref = inferred
+            state.pop("awaiting_location", None)
+
+        # If intent requires location but none known, prompt.
+        if (ChatIntent.FIND_CLINIC.value in LOCATION_REQUIRED_INTENTS) and not location_pref and not pending_location:
+            state["awaiting_location"] = True
+            response_data = {
+                "response": "To tailor results: which area are you interested in?",
+                "meta": {"type": "location_prompt", "options": [
+                    {"key": "jb", "label": "Johor Bahru"},
+                    {"key": "sg", "label": "Singapore"},
+                    {"key": "both", "label": "Both"}
+                ]},
+                "applied_filters": previous_filters,
+                "candidate_pool": [],
+                "booking_context": {},
+            }
+        else:
+            # Accept explicit location choice passed via booking_context
+            if query.booking_context and isinstance(query.booking_context, dict):
+                choice = query.booking_context.get("choose_location")
+                if choice in {"jb","sg","both"}:
+                    state["location_preference"] = choice
+                    state.pop("awaiting_location", None)
+            response_data = handle_find_clinic(
+                latest_user_message,
+                query.history,
+                previous_filters,
+                candidate_clinics,
+                factual_brain_model,
+                ranking_brain_model,
+                embedding_model_name,
+                generation_model,
+                supabase,
+                ["reset", "start over"],
+                session_state=state
+            )
     elif intent == ChatIntent.BOOK_APPOINTMENT:
         response_data = handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
     elif intent == ChatIntent.CANCEL_BOOKING:
