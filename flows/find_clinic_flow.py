@@ -98,7 +98,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     else:
         final_filters = previous_filters.copy(); final_filters.update(current_filters)
     
-    print(f"Final Filters to be applied: {final_filters}")
+    # defer logging of final filters until after location routing normalization below
 
     # --- LOCATION PREFERENCE GATE ---
     # 1) Try to infer from current message if awaiting or missing
@@ -128,13 +128,15 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if not location_preference and search_intent_detected:
         state_update['awaiting_location'] = True
         return {
-            "response": "Before I tailor results: which country are you interested in?",
+            # Keep minimal text; UI should render buttons via meta
+            "response": "Which country would you like to explore?",
             "meta": {"type": "location_prompt", "options": [
                 {"key": "jb", "label": "Johor Bahru"},
                 {"key": "sg", "label": "Singapore"},
                 {"key": "both", "label": "Both"}
             ]},
-            "applied_filters": previous_filters,
+            # Do not echo previous filters when prompting for location
+            "applied_filters": {},
             "candidate_pool": [],
             "booking_context": {},
             "state_update": state_update
@@ -311,6 +313,12 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         print(f"Applying specific township filter: {township_filter}")
         for i, (name, q) in enumerate(db_queries):
             db_queries[i] = (name, q.eq('township', township_filter))
+
+    # After routing, attach normalized country into filters for consistency
+    if location_preference:
+        final_filters['country'] = 'SG' if location_preference == 'sg' else ('MY' if location_preference == 'jb' else 'SG+MY')
+
+    print(f"Final Filters to be applied: {final_filters}")
 
     try:
         merged = []

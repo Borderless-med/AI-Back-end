@@ -213,6 +213,7 @@ async def handle_chat(request: Request, query: UserQuery):
     previous_filters = state.get("applied_filters", {})
     candidate_clinics = state.get("candidate_pool", [])
     booking_context = state.get("booking_context", {})
+    lower_msg = latest_user_message.lower()
 
     try:
         add_conversation_message(supabase, secure_user_id, "user", latest_user_message)
@@ -251,16 +252,51 @@ async def handle_chat(request: Request, query: UserQuery):
             print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
-    # Override misclassifications: if message clearly asks to find/recommend clinics, force FIND_CLINIC
+    # Override misclassifications: if message clearly asks to find/recommend clinics OR mentions a service, force FIND_CLINIC
     if intent in {ChatIntent.GENERAL_DENTAL_QUESTION, ChatIntent.OUT_OF_SCOPE}:
-        lower_msg = latest_user_message.lower()
         search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment"]
-        if any(k in lower_msg for k in search_triggers):
-            print("[INFO] Heuristic override: Detected strong search intent; forcing FIND_CLINIC")
+        service_triggers = [
+            "cleaning","scale","scaling","polish","root canal","implant","whitening","crown",
+            "filling","braces","wisdom tooth","gum treatment","veneers","tmj","sleep apnea"
+        ]
+        if any(k in lower_msg for k in search_triggers) or any(k in lower_msg for k in service_triggers):
+            print("[INFO] Heuristic override: Detected search/service keyword; forcing FIND_CLINIC")
             intent = ChatIntent.FIND_CLINIC
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
+        # Global RESET handling: if user requests reset, clear server state and force location prompt
+        if lower_msg.startswith("reset") or lower_msg.strip() in {"reset", "start over"}:
+            print("[INFO] Reset requested. Clearing filters and forcing location prompt.")
+            state["applied_filters"] = {}
+            state["candidate_pool"] = []
+            state["booking_context"] = {}
+            state["location_preference"] = None
+            state["awaiting_location"] = True
+            response_data = {
+                "response": "Let me restart your search — which country would you like to explore?",
+                "meta": {"type": "location_prompt", "options": [
+                    {"key": "jb", "label": "Johor Bahru"},
+                    {"key": "sg", "label": "Singapore"},
+                    {"key": "both", "label": "Both"}
+                ]},
+                # Do not echo any previous filters on a reset
+                "applied_filters": {},
+                "candidate_pool": [],
+                "booking_context": {}
+            }
+            # Short-circuit on reset
+            updated_history = [msg.dict() for msg in query.history]
+            if response_data.get("response"):
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                try:
+                    add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+                except Exception as e:
+                    logging.error(f"Failed to log assistant message: {e}")
+            update_session(session_id, secure_user_id, state, updated_history)
+            response_data["session_id"] = session_id
+            return response_data
+
         # LOCATION DECISION LAYER
         location_pref = state.get("location_preference")
         pending_location = state.get("awaiting_location", False)
@@ -281,13 +317,15 @@ async def handle_chat(request: Request, query: UserQuery):
         if (ChatIntent.FIND_CLINIC.value in LOCATION_REQUIRED_INTENTS) and not location_pref and not pending_location:
             state["awaiting_location"] = True
             response_data = {
-                "response": "To tailor results: which country are you interested in?",
+                # Keep a short text for accessibility; UI should render buttons from meta
+                "response": "Which country would you like to explore?",
                 "meta": {"type": "location_prompt", "options": [
                     {"key": "jb", "label": "Johor Bahru"},
                     {"key": "sg", "label": "Singapore"},
                     {"key": "both", "label": "Both"}
                 ]},
-                "applied_filters": previous_filters,
+                # Do not echo previous filters when prompting for location
+                "applied_filters": {},
                 "candidate_pool": [],
                 "booking_context": {},
             }
@@ -298,6 +336,7 @@ async def handle_chat(request: Request, query: UserQuery):
                 if choice in {"jb","sg","both"}:
                     state["location_preference"] = choice
                     state.pop("awaiting_location", None)
+                    print(f"[LOCATION] Received explicit choose_location: {choice}")
             response_data = handle_find_clinic(
                 latest_user_message,
                 query.history,
