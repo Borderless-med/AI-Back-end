@@ -89,17 +89,17 @@ def normalize_location_terms(text: str) -> str | None:
 
 origins = [
     "http://localhost:8080",
+    "http://localhost:5173",
     "https://sg-smile-saver.vercel.app",
     "https://www.sg-jb-dental.com",
-    "https://sg-smile-saver-git-deploy-fix-gsps-projects.vercel.app",
-    "https://sg-smile-saver-git-prototype-ui-gsps-projects-5403164b.vercel.app"
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^https://.*vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Authorization", "Content-Type", "X-authorization"],
+    allow_headers=["*"],
 )
 
 def get_user_id_from_jwt(request: Request):
@@ -220,7 +220,39 @@ async def handle_chat(request: Request, query: UserQuery):
     except Exception as e:
         logging.error(f"Failed to log user message: {e}")
 
-    # --- Router Logic (This section is unchanged as it was already correct) ---
+    # --- Global RESET short-circuit (runs before intent classification) ---
+    reset_triggers = [
+        "reset", "reset:", "reset -", "reset please", "start over", "restart", "new search"
+    ]
+    if any(lower_msg.startswith(rt) for rt in reset_triggers):
+        print("[INFO] Global reset requested. Clearing session state and prompting for location.")
+        state["applied_filters"] = {}
+        state["candidate_pool"] = []
+        state["booking_context"] = {}
+        state["location_preference"] = None
+        state["awaiting_location"] = True
+        response_data = {
+            "response": "Let me restart your search — which country would you like to explore?",
+            "meta": {"type": "location_prompt", "options": [
+                {"key": "jb", "label": "Johor Bahru"},
+                {"key": "sg", "label": "Singapore"},
+                {"key": "both", "label": "Both"}
+            ]},
+            "applied_filters": {},
+            "candidate_pool": [],
+            "booking_context": {}
+        }
+        updated_history = [msg.dict() for msg in query.history]
+        updated_history.append({"role": "assistant", "content": response_data["response"]})
+        try:
+            add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+        except Exception as e:
+            logging.error(f"Failed to log assistant message: {e}")
+        update_session(session_id, secure_user_id, state, updated_history)
+        response_data["session_id"] = session_id
+        return response_data
+
+    # --- Router Logic ---
     intent = None
     if booking_context.get('status') == 'confirming_details':
         user_reply = latest_user_message.strip().lower()
@@ -330,6 +362,32 @@ async def handle_chat(request: Request, query: UserQuery):
                 "booking_context": {},
             }
         else:
+            # Mid-session explicit re-prompt: if user is searching and did not state SG/JB and no choose_location provided, prompt again
+            search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "best"]
+            choice = (query.booking_context or {}).get("choose_location") if isinstance(query.booking_context, dict) else None
+            if location_pref and not inferred and any(k in lower_msg for k in search_triggers) and not choice:
+                print("[INFO] Mid-session search detected without explicit location; prompting for country selection again.")
+                state["awaiting_location"] = True
+                response_data = {
+                    "response": "Which country would you like to explore?",
+                    "meta": {"type": "location_prompt", "options": [
+                        {"key": "jb", "label": "Johor Bahru"},
+                        {"key": "sg", "label": "Singapore"},
+                        {"key": "both", "label": "Both"}
+                    ]},
+                    "applied_filters": {},
+                    "candidate_pool": [],
+                    "booking_context": {},
+                }
+                updated_history = [msg.dict() for msg in query.history]
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                try:
+                    add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+                except Exception as e:
+                    logging.error(f"Failed to log assistant message: {e}")
+                update_session(session_id, secure_user_id, state, updated_history)
+                response_data["session_id"] = session_id
+                return response_data
             # Accept explicit location choice passed via booking_context
             if query.booking_context and isinstance(query.booking_context, dict):
                 choice = query.booking_context.get("choose_location")
@@ -337,6 +395,10 @@ async def handle_chat(request: Request, query: UserQuery):
                     state["location_preference"] = choice
                     state.pop("awaiting_location", None)
                     print(f"[LOCATION] Received explicit choose_location: {choice}")
+            # If awaiting_location is set, ignore any client-provided filters until a choice arrives
+            if state.get("awaiting_location"):
+                previous_filters = {}
+                candidate_clinics = []
             response_data = handle_find_clinic(
                 latest_user_message,
                 query.history,

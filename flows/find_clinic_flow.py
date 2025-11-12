@@ -57,17 +57,18 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # Deterministic fallback for service extraction when LLM misses or is inconsistent
     def heuristic_service_from_text(text: str) -> Optional[str]:
         t = (text or '').lower()
+        # Prefer specific procedures before general cleaning/scaling
         patterns = [
             (['root canal', 'endodontic'], 'root_canal'),
             (['implant', 'dental implant'], 'dental_implant'),
-            (['cleaning', 'polish', 'scale', 'scaling'], 'scaling'),
-            (['whitening', 'bleaching'], 'teeth_whitening'),
             (['crown', 'cap'], 'dental_crown'),
             (['filling', 'tooth filling'], 'tooth_filling'),
+            (['whitening', 'bleaching'], 'teeth_whitening'),
             (['braces', 'orthodontic'], 'braces'),
             (['wisdom tooth', 'wisdom extraction'], 'wisdom_tooth'),
             (['gum', 'periodontal'], 'gum_treatment'),
             (['veneers'], 'veneers'),
+            (['cleaning', 'polish', 'scale', 'scaling'], 'scaling'),
         ]
         for keys, svc in patterns:
             if any(k in t for k in keys):
