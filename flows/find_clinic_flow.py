@@ -122,6 +122,14 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if 'township' in current_filters and current_filters['township']:
         current_filters['township'] = current_filters['township'].rstrip(string.punctuation).strip()
         print(f"Sanitized township to: '{current_filters['township'].lower()}'")
+        # If the LLM extracted a generic/country-level area (e.g., 'Singapore' or 'Johor Bahru')
+        # but the user's text contains a more specific township (e.g., 'Taman Molek'), prefer the specific one.
+        generic_aliases = { 'singapore', 'sg', 'johor', 'jb', 'johor bahru' }
+        if current_filters['township'].lower() in generic_aliases:
+            ht = heuristic_township_from_text(latest_user_message)
+            if ht and ht.lower() not in generic_aliases:
+                current_filters['township'] = ht.rstrip(string.punctuation).strip()
+                print(f"[Heuristic Override] Replaced generic township with specific '{current_filters['township']}' from text")
     elif not current_filters.get('township'):
         ht = heuristic_township_from_text(latest_user_message)
         if ht:

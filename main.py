@@ -74,6 +74,17 @@ JB_SYNONYMS = {
     "johor bahru","johor","jb","j.b.","bahru","malaysia side","across the border","causeway","second link"
 }
 
+# Township to country hints to infer SG/JB from area names in the same message
+TOWNSHIP_COUNTRY_MAP = {
+    # Singapore areas
+    "jurong": "sg", "jurong east": "sg", "jurong west": "sg", "bedok": "sg", "chinatown": "sg",
+    "toa payoh": "sg", "ang mo kio": "sg", "yishun": "sg", "tampines": "sg", "pasir ris": "sg",
+    # Johor Bahru areas
+    "taman molek": "jb", "molek": "jb", "mount austin": "jb", "austin heights": "jb", "taman mount austin": "jb",
+    "tebrau": "jb", "adda heights": "jb", "bukit indah": "jb", "permas jaya": "jb", "skudai": "jb",
+    "taman sutera": "jb", "taman pelangi": "jb", "taman johor jaya": "jb", "taman damansara aliff": "jb",
+}
+
 def normalize_location_terms(text: str) -> str | None:
     if not text:
         return None
@@ -85,6 +96,10 @@ def normalize_location_terms(text: str) -> str | None:
         return "sg"
     if any(s in t for s in JB_SYNONYMS):
         return "jb"
+    # infer from known township/area names
+    for key, country in TOWNSHIP_COUNTRY_MAP.items():
+        if key in t:
+            return country
     return None
 
 origins = [
