@@ -30,6 +30,28 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     location_preference = session_state.get('location_preference')
     awaiting_location = session_state.get('awaiting_location', False)
     current_filters = {}
+
+    # Known township-to-country hints to improve inference and avoid wrong-table queries
+    TOWNSHIP_COUNTRY_MAP = {
+        # Singapore regions
+        'jurong': 'sg', 'jurong east': 'sg', 'jurong west': 'sg', 'bedok': 'sg', 'chinatown': 'sg',
+        'toa payoh': 'sg', 'ang mo kio': 'sg', 'yishun': 'sg', 'tampines': 'sg', 'pasir ris': 'sg',
+        # Johor Bahru (Malaysia) areas
+        'taman molek': 'jb', 'molek': 'jb', 'mount austin': 'jb', 'austin heights': 'jb', 'taman mount austin': 'jb',
+        'tebrau': 'jb', 'add a': 'jb', 'adda heights': 'jb', 'bukit indah': 'jb', 'permas jaya': 'jb',
+        'skudai': 'jb', 'taman sutera': 'jb', 'taman pelangi': 'jb', 'taman johor jaya': 'jb',
+        'taman damansara aliff': 'jb', 'damansara aliff': 'jb', 'taman setia indah': 'jb', 'setia indah': 'jb',
+    }
+
+    def detect_country_from_township(text: Optional[str]) -> Optional[str]:
+        if not text:
+            return None
+        t = text.lower()
+        # substring containment to catch variants (e.g., "jurong" matches "jurong west")
+        for key, country in TOWNSHIP_COUNTRY_MAP.items():
+            if key in t:
+                return country
+        return None
     try:
         prompt_text = f"""
         You are an expert entity extractor. Your only job is to analyze the user's most recent query and call the `UserIntent` tool.
@@ -131,6 +153,10 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             return 'sg'
         if any(k in t for k in ['johor bahru', 'johor', 'jb']):
             return 'jb'
+        # Infer from township keywords present in free text
+        mapped = detect_country_from_township(t)
+        if mapped:
+            return mapped
         return None
 
     inferred = infer_location_from_text(latest_user_message)
@@ -331,15 +357,19 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         for i, (name, q) in enumerate(db_queries):
             db_queries[i] = (name, q.eq('is_metro_jb', True))
     elif township_filter:
-        print(f"Applying fuzzy township filter: {township_filter}")
-        # Case-insensitive contains match to handle variants like 'Jurong' -> 'JURONG WEST', 'JURONG SPRING'
-        pattern = f"%{township_filter}%"
-        for i, (name, q) in enumerate(db_queries):
-            try:
-                db_queries[i] = (name, q.ilike('township', pattern))
-            except Exception:
-                # Fallback if client doesn't support ilike; keep equality (may be restrictive)
-                db_queries[i] = (name, q.eq('township', township_filter))
+        # If a township clearly implies a country, override the location_preference accordingly
+        implied = detect_country_from_township(township_filter)
+        if implied and implied != location_preference:
+            print(f"[LOCATION] Township '{township_filter}' implies country '{implied}'. Overriding location_preference.")
+            location_preference = implied
+            state_update['location_preference'] = implied
+            # reset db_queries to match new location
+            if implied == 'sg':
+                db_queries = [('sg_clinics', build_query_for_table('sg_clinics'))]
+            elif implied == 'jb':
+                db_queries = [('clinics_data', build_query_for_table('clinics_data'))]
+        # Do NOT narrow in SQL by township; we'll perform a robust in-memory fuzzy filter on township/address
+        print(f"Applying fuzzy township filter (in-memory): {township_filter}")
 
     # After routing, attach normalized country into filters for consistency
     if location_preference:
@@ -361,13 +391,15 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             except Exception as e:
                 print(f"Database query error for table {name}: {e}")
         candidate_clinics = merged
-        # If a fuzzy township was requested, also apply a lightweight in-memory filter to township/address just in case
+        # If a fuzzy township was requested, apply a robust in-memory filter to township and address
         if township_filter:
             tf_low = township_filter.lower()
             filtered = [c for c in candidate_clinics if (c.get('township') and tf_low in str(c.get('township', '')).lower()) or (c.get('address') and tf_low in str(c.get('address', '')).lower())]
             if filtered:
                 print(f"Fuzzy township post-filter reduced candidates from {len(candidate_clinics)} to {len(filtered)}")
                 candidate_clinics = filtered
+            else:
+                print("Fuzzy township post-filter found 0 matches — keeping broader country/service results to avoid empty response.")
         print(f"Found {len(candidate_clinics)} candidates after initial database filtering across {len(db_queries)} source(s).")
     except Exception as e:
         print(f"Database query error: {e}")
