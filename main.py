@@ -287,9 +287,9 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             User message: "{latest_user_message}"
             Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
             Respond with ONLY one of the possible intents, and nothing else."""
-            response = gatekeeper_model.generate_content(gatekeeper_prompt)
-            print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
-            parsed_intent = response.text.strip().lower()
+            gk_response = gatekeeper_model.generate_content(gatekeeper_prompt)
+            print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{gk_response.text}'")
+            parsed_intent = gk_response.text.strip().lower()
             if parsed_intent in [e.value for e in ChatIntent]:
                 intent = ChatIntent(parsed_intent)
             else:
