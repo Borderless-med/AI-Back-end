@@ -100,6 +100,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-Id", "X-API-Version"],
 )
 
 def get_user_id_from_jwt(request: Request):
@@ -172,6 +173,15 @@ def update_session(session_id: str, user_id: str, context: dict, conversation_hi
 def read_root():
     return {"message": "SG-JB Dental Chatbot API is running"}
 
+# Lightweight health endpoint for smoke tests and uptime checks
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "version": os.getenv("RELEASE", "local"),
+        "environment": os.getenv("ENVIRONMENT", "dev")
+    }
+
 @app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
     user_id = get_user_id_from_jwt(request)
@@ -182,18 +192,21 @@ async def restore_session(request: Request, query: SessionRestoreQuery):
     else:
         raise HTTPException(status_code=404, detail="Session not found or access denied.")
 
+DEBUG_SMOKE = os.getenv("DEBUG_SMOKE", "false").lower() in ("1", "true", "yes", "on")
+
 @app.post("/chat")
-async def handle_chat(request: Request, query: UserQuery):
-    print("\n--- NEW /CHAT REQUEST RECEIVED ---", flush=True)
+async def handle_chat(request: Request, query: UserQuery, response: Response):
+    trace_id = str(uuid4())
+    print(f"\n--- [trace:{trace_id}] NEW /CHAT REQUEST RECEIVED ---", flush=True)
     try:
         # REMARK: The variable is renamed to 'secure_user_id' for clarity. This is now the single source of truth.
         secure_user_id = get_user_id_from_jwt(request)
-        print(f"[INFO] JWT validation successful for user: {secure_user_id}", flush=True)
+        print(f"[trace:{trace_id}] [INFO] JWT validation successful for user: {secure_user_id}", flush=True)
     except HTTPException as e:
-        print(f"[ERROR] Authentication failed with status {e.status_code}: {e.detail}", flush=True)
+        print(f"[trace:{trace_id}] [ERROR] Authentication failed with status {e.status_code}: {e.detail}", flush=True)
         raise e
     except Exception as e:
-        print(f"[FATAL ERROR] An unexpected error occurred in /chat endpoint: {e}", flush=True)
+        print(f"[trace:{trace_id}] [FATAL ERROR] An unexpected error occurred in /chat endpoint: {e}", flush=True)
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
     session_id = query.session_id
@@ -225,7 +238,7 @@ async def handle_chat(request: Request, query: UserQuery):
         "reset", "reset:", "reset -", "reset please", "start over", "restart", "new search"
     ]
     if any(lower_msg.startswith(rt) for rt in reset_triggers):
-        print("[INFO] Global reset requested. Clearing session state and prompting for location.")
+        print(f"[trace:{trace_id}] [INFO] Global reset requested. Clearing session state and prompting for location.")
         state["applied_filters"] = {}
         state["candidate_pool"] = []
         state["booking_context"] = {}
@@ -275,15 +288,15 @@ async def handle_chat(request: Request, query: UserQuery):
             Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
             Respond with ONLY one of the possible intents, and nothing else."""
             response = gatekeeper_model.generate_content(gatekeeper_prompt)
-            print(f"[DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
+            print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{response.text}'")
             parsed_intent = response.text.strip().lower()
             if parsed_intent in [e.value for e in ChatIntent]:
                 intent = ChatIntent(parsed_intent)
             else:
                 intent = ChatIntent.OUT_OF_SCOPE
-            print(f"[INFO] Gatekeeper FINAL classified intent as: {intent.value}")
+            print(f"[trace:{trace_id}] [INFO] Gatekeeper FINAL classified intent as: {intent.value}")
         except Exception as e:
-            print(f"[ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
+            print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
     # Override misclassifications: if message clearly asks to find/recommend clinics OR mentions a service, force FIND_CLINIC
@@ -294,14 +307,14 @@ async def handle_chat(request: Request, query: UserQuery):
             "filling","braces","wisdom tooth","gum treatment","veneers","tmj","sleep apnea"
         ]
         if any(k in lower_msg for k in search_triggers) or any(k in lower_msg for k in service_triggers):
-            print("[INFO] Heuristic override: Detected search/service keyword; forcing FIND_CLINIC")
+            print(f"[trace:{trace_id}] [INFO] Heuristic override: Detected search/service keyword; forcing FIND_CLINIC")
             intent = ChatIntent.FIND_CLINIC
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
         # Global RESET handling: if user requests reset, clear server state and force location prompt
         if lower_msg.startswith("reset") or lower_msg.strip() in {"reset", "start over"}:
-            print("[INFO] Reset requested. Clearing filters and forcing location prompt.")
+            print(f"[trace:{trace_id}] [INFO] Reset requested. Clearing filters and forcing location prompt.")
             state["applied_filters"] = {}
             state["candidate_pool"] = []
             state["booking_context"] = {}
@@ -339,7 +352,7 @@ async def handle_chat(request: Request, query: UserQuery):
         is_first_turn = len(query.history) == 1 and query.history[0].role == "user"
         if is_first_turn and not inferred:
             if location_pref:
-                print("[INFO] Fresh turn detected. Clearing persisted location_preference to prompt user explicitly.")
+                print(f"[trace:{trace_id}] [INFO] Fresh turn detected. Clearing persisted location_preference to prompt user explicitly.")
             state.pop("location_preference", None)
             location_pref = None
         if inferred:
@@ -368,7 +381,7 @@ async def handle_chat(request: Request, query: UserQuery):
             search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "best"]
             choice = (query.booking_context or {}).get("choose_location") if isinstance(query.booking_context, dict) else None
             if location_pref and not inferred and any(k in lower_msg for k in search_triggers) and not choice:
-                print("[INFO] Mid-session search detected without explicit location; prompting for country selection again.")
+                print(f"[trace:{trace_id}] [INFO] Mid-session search detected without explicit location; prompting for country selection again.")
                 state["awaiting_location"] = True
                 response_data = {
                     "response": "Which country would you like to explore?",
@@ -396,7 +409,7 @@ async def handle_chat(request: Request, query: UserQuery):
                 if choice in {"jb","sg","both"}:
                     state["location_preference"] = choice
                     state.pop("awaiting_location", None)
-                    print(f"[LOCATION] Received explicit choose_location: {choice}")
+                    print(f"[trace:{trace_id}] [LOCATION] Received explicit choose_location: {choice}")
             # If awaiting_location is set, ignore any client-provided filters until a choice arrives
             if state.get("awaiting_location"):
                 previous_filters = {}
@@ -404,7 +417,7 @@ async def handle_chat(request: Request, query: UserQuery):
             # If a hard reset was just performed, trim the history to avoid leaking pre-reset intents (e.g., old services)
             effective_history = query.history
             if state.get("hard_reset_active"):
-                print("[RESET] Hard reset is active — trimming conversation history for extraction to the latest turn only.")
+                print(f"[trace:{trace_id}] [RESET] Hard reset is active — trimming conversation history for extraction to the latest turn only.")
                 effective_history = [query.history[-1]]  # Only the latest user message
 
             response_data = handle_find_clinic(
@@ -472,5 +485,26 @@ async def handle_chat(request: Request, query: UserQuery):
     update_session(session_id, secure_user_id, new_state, updated_history)
     
     response_data["session_id"] = session_id
+
+    # Attach optional debug meta and response headers for smoke tests
+    if DEBUG_SMOKE:
+        debug_payload = {
+            "trace_id": trace_id,
+            "intent": intent.value if intent else None,
+            "awaiting_location": new_state.get("awaiting_location"),
+            "location_preference": new_state.get("location_preference"),
+            "hard_reset_active": new_state.get("hard_reset_active"),
+            "final_applied_filters": new_state.get("applied_filters"),
+            "candidate_count": len(new_state.get("candidate_pool", [])),
+        }
+        existing_meta = response_data.get("meta")
+        if isinstance(existing_meta, dict):
+            response_data["meta"] = {**existing_meta, "debug": debug_payload}
+        else:
+            response_data["meta"] = {"debug": debug_payload}
+
+    # Always expose request id and version in headers for correlation (CORS-exposed)
+    response.headers["X-Request-Id"] = trace_id
+    response.headers["X-API-Version"] = os.getenv("RELEASE", "local")
 
     return response_data
