@@ -12,6 +12,7 @@ import jwt
 from jwt import InvalidTokenError
 
 load_dotenv()
+COUNTRY_MEMORY_ENABLED = os.getenv("COUNTRY_MEMORY_ENABLED", "true").lower() in ("1","true","yes","on")
 
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -107,6 +108,9 @@ origins = [
     "http://localhost:5173",
     "https://sg-smile-saver.vercel.app",
     "https://www.sg-jb-dental.com",
+    # Production domain(s)
+    "https://www.orachope.org",
+    "https://orachope.org",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -114,7 +118,8 @@ app.add_middleware(
     allow_origin_regex=r"^https://.*vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    # Explicitly include custom headers commonly used by the SPA
+    allow_headers=["*", "X-Authorization", "Content-Type"],
     expose_headers=["X-Request-Id", "X-API-Version"],
 )
 
@@ -395,7 +400,18 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             # Mid-session explicit re-prompt: if user is searching and did not state SG/JB and no choose_location provided, prompt again
             search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "best"]
             choice = (query.booking_context or {}).get("choose_location") if isinstance(query.booking_context, dict) else None
-            if location_pref and not inferred and any(k in lower_msg for k in search_triggers) and not choice:
+            switch_phrases = ["switch", "change to", "show sg", "show jb", "switch to", "move to sg", "move to jb", "sg please", "jb please"]
+            should_prompt = (
+                location_pref and not inferred and any(k in lower_msg for k in search_triggers) and not choice
+            )
+            if COUNTRY_MEMORY_ENABLED:
+                # Suppress re-prompt unless user explicitly indicates switch intent
+                if any(p in lower_msg for p in switch_phrases):
+                    print(f"[trace:{trace_id}] [INFO] Explicit location switch phrase detected; prompting for confirmation.")
+                    state["awaiting_location"] = True
+                else:
+                    should_prompt = False
+            if should_prompt:
                 print(f"[trace:{trace_id}] [INFO] Mid-session search detected without explicit location; prompting for country selection again.")
                 state["awaiting_location"] = True
                 response_data = {
