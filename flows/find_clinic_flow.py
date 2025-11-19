@@ -217,7 +217,8 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             fuzzy_pool = []
             for tbl in tables:
                 try:
-                    resp = supabase.table(tbl).select("id,name,address,rating,reviews,country,website_url,operating_hours,is_metro_jb").limit(200).execute()
+                    # Select only columns that exist across tables; annotate country below
+                    resp = supabase.table(tbl).select("id,name,address,rating,reviews,website_url,operating_hours,is_metro_jb").limit(200).execute()
                     data = resp.data or []
                     for c in data:
                         if 'country' not in c or not c['country']:
@@ -254,7 +255,26 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 print(f"[DirectLookup] Fuzzy fallback matched '{best_c.get('name')}' with sim={best_score:.2f}")
             else:
                 print(f"[DirectLookup] Fuzzy fallback found no clinic above threshold (best={best_score:.2f})")
-                return None
+                # Since this path was triggered as a likely direct-name request, do NOT fall back to generic search.
+                # Provide a clear no-match message and preserve any inferred country preference.
+                hint = " in Johor Bahru (JB)" if has_jb_hint else (" in Singapore (SG)" if has_sg_hint else "")
+                friendly = (
+                    f"I couldn’t find a clinic named '{name_fragment}'{hint}. "
+                    f"If you want, I can search by treatment instead (e.g., root canal, cleaning)."
+                )
+                state_update_local = {}
+                if has_jb_hint:
+                    state_update_local = {"location_preference": 'jb', "awaiting_location": False}
+                elif has_sg_hint:
+                    state_update_local = {"location_preference": 'sg', "awaiting_location": False}
+                return {
+                    "response": friendly,
+                    "applied_filters": {},
+                    "candidate_pool": [],
+                    "booking_context": {},
+                    "meta": {"type": "no_direct_match"},
+                    "state_update": state_update_local
+                }
         # Prefer exact-ish matches first (token containment), then fall back to first result
         GENERIC_NAME_TOKENS = {"dental", "clinic", "dentist", "center", "centre", "care", "smile", "plus", "the", "and", "&", "surgery", "medical", "family", "oral", "health", "lounge", "group"}
         meaningful_tokens = [t for t in distinct_tokens if t not in GENERIC_NAME_TOKENS]
