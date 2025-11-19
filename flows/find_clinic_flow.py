@@ -56,19 +56,46 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             if lower.startswith(fp):
                 lower = lower[len(fp):].strip()
                 break
+
+        # Simple typo corrections (common misspellings observed)
+        TYPO_CORRECTIONS = {
+            'dentel': 'dental',
+            'dentl': 'dental',
+            'denatl': 'dental',
+            'ko ': 'koh ',  # beginning token
+            ' ko dental': ' koh dental',
+        }
+        for wrong, right in TYPO_CORRECTIONS.items():
+            if wrong in lower:
+                lower = lower.replace(wrong, right)
+
+        # Normalize brand patterns
+        brand_patterns = {
+            'q & m': 'q & m dental',
+            'q&m': 'q & m dental',
+            'q and m': 'q & m dental',
+            'q  m': 'q & m dental',
+        }
+        for pat, canon in brand_patterns.items():
+            if pat in lower:
+                # Only extend if 'dental' not already present
+                if 'dental' not in lower:
+                    lower = lower.replace(pat, canon)
+
         # Heuristics: short-ish message or contains explicit name markers
         trigger_keywords = ["clinic", "dental", "centre", "center"]
         # Avoid triggering on purely generic search words without a distinctive token
-        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental"}
+        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental", "near", "nearby"}
+        country_tokens = {"jb", "johor", "johor bahru", "singapore", "sg"}
         tokens = [t for t in [tok.strip('.,:;!"\'') for tok in lower.split()] if t]
-        distinct_tokens = [t for t in tokens if t not in generic_only]
+        distinct_tokens = [t for t in tokens if t not in generic_only and t not in country_tokens]
         if not distinct_tokens:
             return None
         # Require at least one trigger word or message length < 60 indicating a singular target request
         if not any(k in lower for k in trigger_keywords) and len(lower) > 60:
             return None
         # Build a fuzzy name fragment from remaining tokens (exclude very short tokens)
-        name_fragment = " ".join([t for t in distinct_tokens if len(t) >= 3])
+        name_fragment = " ".join([t for t in distinct_tokens if len(t) >= 2])  # allow short brand tokens like 'ko'
         if len(name_fragment) < 3:
             return None
         # Choose tables by explicit country hints when present; otherwise query both.
@@ -120,7 +147,38 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                     seen.add(key)
             matched = deduped
         if not matched:
-            return None
+            # Fallback fuzzy scan: pull limited set of clinic names from relevant tables and compute similarity
+            fuzzy_pool = []
+            for tbl in tables:
+                try:
+                    resp = supabase.table(tbl).select("id,name,address,rating,reviews,country,website_url,operating_hours,is_metro_jb").limit(200).execute()
+                    data = resp.data or []
+                    for c in data:
+                        if 'country' not in c or not c['country']:
+                            c['country'] = 'SG' if tbl == 'sg_clinics' else 'MY'
+                    fuzzy_pool.extend(data)
+                except Exception as e:
+                    print(f"[DirectLookup] Fuzzy pool query error on {tbl}: {e}")
+            # Score by similarity to cleaned message stripped of country tokens
+            def clean_for_similarity(text: str) -> str:
+                for ct in country_tokens:
+                    text = text.replace(ct, '')
+                return text.strip()
+            target = clean_for_similarity(lower)
+            best_c = None
+            best_score = 0.0
+            for c in fuzzy_pool:
+                n = c.get('name', '').lower()
+                sim = SequenceMatcher(None, target, n).ratio()
+                if sim > best_score:
+                    best_score = sim
+                    best_c = c
+            if best_c and best_score >= 0.72:
+                matched = [best_c]
+                print(f"[DirectLookup] Fuzzy fallback matched '{best_c.get('name')}' with sim={best_score:.2f}")
+            else:
+                print(f"[DirectLookup] Fuzzy fallback found no clinic above threshold (best={best_score:.2f})")
+                return None
         # Prefer exact-ish matches first (token containment), then fall back to first result
         def score(clinic):
             n = clinic.get('name', '').lower()
