@@ -1,5 +1,6 @@
 import json
 import string
+import re
 import google.generativeai as genai
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
@@ -39,7 +40,10 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     def attempt_direct_clinic_lookup(message: str):
         if not message:
             return None
+        # Normalize unicode punctuation (curly quotes, weird spaces)
         lower = message.lower().strip()
+        lower = lower.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
+        lower = lower.replace('\u00a0', ' ')
         # Remove common filler prefixes to focus on the clinic name
         filler_prefixes = [
             "tell me all about ",
@@ -82,14 +86,18 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 if 'dental' not in lower:
                     lower = lower.replace(pat, canon)
 
+        # Brand special-case: Q & M brand may lack distinct tokens beyond generic words
+        qm_brand = bool(re.search(r"\bq\s*(?:&|and|\&)\s*m\b", lower))
+
         # Heuristics: short-ish message or contains explicit name markers
         trigger_keywords = ["clinic", "dental", "centre", "center"]
         # Avoid triggering on purely generic search words without a distinctive token
-        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental", "near", "nearby"}
+        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental", "near", "nearby", "and", "&"}
         country_tokens = {"jb", "johor", "johor bahru", "singapore", "sg"}
         tokens = [t for t in [tok.strip('.,:;!"\'') for tok in lower.split()] if t]
         distinct_tokens = [t for t in tokens if t not in generic_only and t not in country_tokens]
-        if not distinct_tokens:
+        # If this is clearly a Q & M brand query, allow proceeding even if distinct tokens are empty
+        if not distinct_tokens and not qm_brand:
             return None
         # Require at least one trigger word or message length < 60 indicating a singular target request
         if not any(k in lower for k in trigger_keywords) and len(lower) > 60:
@@ -97,7 +105,11 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         # Build a fuzzy name fragment from remaining tokens (exclude very short tokens)
         name_fragment = " ".join([t for t in distinct_tokens if len(t) >= 2])  # allow short brand tokens like 'ko'
         if len(name_fragment) < 3:
-            return None
+            # If brand-only query like "q & m (dental)", synthesize a fragment
+            if qm_brand:
+                name_fragment = "q & m dental"
+            else:
+                return None
         # Choose tables by explicit country hints when present; otherwise query both.
         has_jb_hint = any(k in lower for k in ["jb","johor","johor bahru","bahru"])
         has_sg_hint = any(k in lower for k in ["singapore","sg","s'g","lion city"]) and not has_jb_hint
@@ -107,6 +119,60 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             tables = ["sg_clinics"]
         else:
             tables = ["clinics_data", "sg_clinics"]
+
+        # If Q & M brand query, fetch all matching branches and pick best
+        if qm_brand:
+            brand_matches = []
+            qm_patterns = ["%q & m%", "%q&m%", "%q and m%"]
+            for tbl in tables:
+                for pat in qm_patterns:
+                    try:
+                        resp = supabase.table(tbl).select("*").ilike("name", pat).execute()
+                        data = resp.data or []
+                        for c in data:
+                            if 'country' not in c or not c['country']:
+                                c['country'] = 'SG' if tbl == 'sg_clinics' else 'MY'
+                        brand_matches.extend(data)
+                    except Exception as e:
+                        print(f"[DirectLookup] Q&M query error on {tbl} with pattern {pat}: {e}")
+            # Deduplicate by id or name
+            seen_b = set(); deduped_b = []
+            for c in brand_matches:
+                key = c.get('id') or c.get('name')
+                if key not in seen_b:
+                    deduped_b.append(c); seen_b.add(key)
+            brand_matches = deduped_b
+            if not brand_matches:
+                print("[DirectLookup] No Q & M branches found for brand query.")
+            else:
+                # Pick best by rating, then reviews
+                brand_matches.sort(key=lambda c: (c.get('rating', 0) or 0, c.get('reviews', 0) or 0), reverse=True)
+                clinic = brand_matches[0]
+                clinic_clean = {k: v for k, v in clinic.items() if k not in {"embedding", "embedding_arr"}}
+                clinic_clean['tags'] = derive_clinic_tags(clinic_clean)
+                address = clinic_clean.get('address')
+                if address:
+                    from urllib.parse import quote_plus
+                    clinic_clean['maps_link'] = f"https://www.google.com/maps/dir/?api=1&destination={quote_plus(address)}"
+                response_text = (
+                    f"Clinic details for **{clinic_clean.get('name','Unknown Clinic')}**:\n"
+                    f"Address: {address or 'Not available'}\n"
+                    f"Rating: {clinic_clean.get('rating','N/A')} ({clinic_clean.get('reviews','N/A')} reviews)\n"
+                    f"Country: {clinic_clean.get('country','Unknown')}\n"
+                    + ("\nThere are multiple Q & M branches. If you meant a different one, tell me the area (e.g., Yishun, Bedok).")
+                )
+                print(f"[DirectLookup] Q&M brand matched: {clinic_clean.get('name')} ({clinic_clean.get('country')})")
+                country = clinic_clean.get('country')
+                loc_pref = 'sg' if country == 'SG' else ('jb' if country == 'MY' else None)
+                state_update_local = {"location_preference": loc_pref, "awaiting_location": False} if loc_pref else {}
+                return {
+                    "response": response_text,
+                    "applied_filters": {"direct_clinic": clinic_clean.get('name'), "country": clinic_clean.get('country')},
+                    "candidate_pool": [clinic_clean],
+                    "booking_context": {},
+                    "meta": {"type": "clinic_detail"},
+                    "state_update": state_update_local
+                }
 
         # Try chosen tables; use ilike for case-insensitive substring match
         matched = []
@@ -165,15 +231,25 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                     text = text.replace(ct, '')
                 return text.strip()
             target = clean_for_similarity(lower)
+            # Require at least one meaningful non-generic token in target for fuzzy match
+            GENERIC_NAME_TOKENS = {"dental", "clinic", "dentist", "center", "centre", "care", "smile", "plus", "the", "and", "&", "surgery", "medical", "family", "oral", "health", "lounge"}
+            target_tokens = {t for t in [tok.strip('.,:;!"\'') for tok in target.split()] if t and t not in GENERIC_NAME_TOKENS and t not in country_tokens and len(t) >= 3}
+            if not target_tokens and not qm_brand:
+                print("[DirectLookup] Fuzzy fallback aborted: no meaningful tokens in target.")
+                return None
             best_c = None
             best_score = 0.0
             for c in fuzzy_pool:
                 n = c.get('name', '').lower()
+                # Skip candidates with zero overlap on meaningful tokens
+                name_tokens = {t for t in [tok.strip('.,:;!"\'') for tok in n.split()] if t and t not in GENERIC_NAME_TOKENS and len(t) >= 3}
+                if target_tokens and not (target_tokens & name_tokens):
+                    continue
                 sim = SequenceMatcher(None, target, n).ratio()
                 if sim > best_score:
                     best_score = sim
                     best_c = c
-            if best_c and best_score >= 0.72:
+            if best_c and best_score >= 0.82:
                 matched = [best_c]
                 print(f"[DirectLookup] Fuzzy fallback matched '{best_c.get('name')}' with sim={best_score:.2f}")
             else:
