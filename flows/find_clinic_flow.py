@@ -92,7 +92,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         # Heuristics: short-ish message or contains explicit name markers
         trigger_keywords = ["clinic", "dental", "centre", "center"]
         # Avoid triggering on purely generic search words without a distinctive token
-        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental", "near", "nearby", "and", "&"}
+        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental", "near", "nearby", "and", "&", "smile", "hub", "care", "plus", "lounge", "surgery", "medical", "center", "centre", "the"}
         country_tokens = {"jb", "johor", "johor bahru", "singapore", "sg"}
         tokens = [t for t in [tok.strip('.,:;!"\'') for tok in lower.split()] if t]
         distinct_tokens = [t for t in tokens if t not in generic_only and t not in country_tokens]
@@ -232,7 +232,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 return text.strip()
             target = clean_for_similarity(lower)
             # Require at least one meaningful non-generic token in target for fuzzy match
-            GENERIC_NAME_TOKENS = {"dental", "clinic", "dentist", "center", "centre", "care", "smile", "plus", "the", "and", "&", "surgery", "medical", "family", "oral", "health", "lounge"}
+            GENERIC_NAME_TOKENS = {"dental", "clinic", "dentist", "center", "centre", "care", "smile", "plus", "the", "and", "&", "surgery", "medical", "family", "oral", "health", "lounge", "group"}
             target_tokens = {t for t in [tok.strip('.,:;!"\'') for tok in target.split()] if t and t not in GENERIC_NAME_TOKENS and t not in country_tokens and len(t) >= 3}
             if not target_tokens and not qm_brand:
                 print("[DirectLookup] Fuzzy fallback aborted: no meaningful tokens in target.")
@@ -256,18 +256,22 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 print(f"[DirectLookup] Fuzzy fallback found no clinic above threshold (best={best_score:.2f})")
                 return None
         # Prefer exact-ish matches first (token containment), then fall back to first result
+        GENERIC_NAME_TOKENS = {"dental", "clinic", "dentist", "center", "centre", "care", "smile", "plus", "the", "and", "&", "surgery", "medical", "family", "oral", "health", "lounge", "group"}
+        meaningful_tokens = [t for t in distinct_tokens if t not in GENERIC_NAME_TOKENS]
         def score(clinic):
             n = clinic.get('name', '').lower()
             token_hits = sum(1 for t in distinct_tokens if t in n)
+            meaningful_hits = sum(1 for t in meaningful_tokens if t in n)
             sim = SequenceMatcher(None, name_fragment, n).ratio()
             # Weighted score: prioritize token containment, then similarity
-            return (token_hits * 1.0) + (sim * 2.0)
+            return (token_hits * 1.0) + (meaningful_hits * 1.5) + (sim * 2.0)
         matched.sort(key=score, reverse=True)
         best = matched[0]
         best_tokens = sum(1 for t in distinct_tokens if t in best.get('name', '').lower())
+        best_meaningful = sum(1 for t in meaningful_tokens if t in best.get('name', '').lower())
         best_sim = SequenceMatcher(None, name_fragment, best.get('name', '').lower()).ratio()
-        # Require either at least one token hit OR strong similarity (>= 0.78)
-        if best_tokens < 1 and best_sim < 0.78:
+        # Require at least one meaningful token hit OR strong similarity (>= 0.80)
+        if best_meaningful < 1 and best_sim < 0.80:
             print(f"[DirectLookup] Fuzzy match below threshold (tokens={best_tokens}, sim={best_sim:.2f}); aborting direct lookup.")
             return None
         clinic = best
