@@ -1,4 +1,6 @@
 
+from .utils import get_disclaimer
+
 def handle_qna(latest_user_message: str, generation_model):
     # generation_model should be an instance of genai.GenerativeModel, e.g. genai.GenerativeModel("gemini-pro")
     """
@@ -18,11 +20,18 @@ def handle_qna(latest_user_message: str, generation_model):
     try:
         ai_response = generation_model.generate_content(qna_prompt)
         follow_up_question = "\n\nWould you like me to help you find a clinic that can assist with this?"
-        full_response = ai_response.text + follow_up_question
+        disclaimer = get_disclaimer()
+        raw_text = ai_response.text or "I'm sorry, I wasn't able to generate an answer this time."
+        # Ensure disclaimer appended exactly once
+        if "Disclaimer:" in raw_text:
+            full_response = raw_text + follow_up_question
+        else:
+            full_response = raw_text + disclaimer + follow_up_question
         print(f"Q&A AI Response: {full_response}")
         return {"response": full_response}
     except Exception as e:
         print(f"Q&A Flow Error: {e}")
-        return {"response": "I'm sorry, I encountered an error while trying to answer your question. Please try again."}
+        fallback = ("I'm sorry, I encountered an error while trying to answer your question. Please try again." + get_disclaimer())
+        return {"response": fallback}
 
 

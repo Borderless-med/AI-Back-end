@@ -1,12 +1,11 @@
 import json
 import string
 import google.generativeai as genai
-import numpy as np
-from numpy.linalg import norm
 from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional, List, Tuple, Dict
+from .utils import derive_clinic_tags
 
 # --- Pydantic Models required for this flow ---
 class ServiceEnum(str, Enum):
@@ -30,6 +29,119 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     location_preference = session_state.get('location_preference')
     awaiting_location = session_state.get('awaiting_location', False)
     current_filters = {}
+
+    # --- EARLY DIRECT CLINIC NAME LOOKUP (NEW) ---
+    # If the user message appears to reference a specific clinic name (rather than asking for a search) we attempt
+    # a direct name match before running the broader filtering logic. This prevents failures when a user asks
+    # directly for details about "Some Dental Clinic" without providing a service. We bypass rating/review gates
+    # for direct lookups to avoid hiding requested clinics.
+    def attempt_direct_clinic_lookup(message: str):
+        if not message:
+            return None
+        lower = message.lower().strip()
+        # Remove common filler prefixes to focus on the clinic name
+        filler_prefixes = [
+            "tell me all about ",
+            "tell me about ",
+            "show me ",
+            "info on ",
+            "information about ",
+            "details on ",
+            "learn about ",
+            "more about ",
+            "what about ",
+        ]
+        for fp in filler_prefixes:
+            if lower.startswith(fp):
+                lower = lower[len(fp):].strip()
+                break
+        # Heuristics: short-ish message or contains explicit name markers
+        trigger_keywords = ["clinic", "dental", "centre", "center"]
+        # Avoid triggering on purely generic search words without a distinctive token
+        generic_only = {"find", "recommend", "suggest", "clinic", "clinics", "dentist", "dental"}
+        tokens = [t for t in [tok.strip('.,:;!"\'') for tok in lower.split()] if t]
+        distinct_tokens = [t for t in tokens if t not in generic_only]
+        if not distinct_tokens:
+            return None
+        # Require at least one trigger word or message length < 60 indicating a singular target request
+        if not any(k in lower for k in trigger_keywords) and len(lower) > 60:
+            return None
+        # Build a fuzzy name fragment from remaining tokens (exclude very short tokens)
+        name_fragment = " ".join([t for t in distinct_tokens if len(t) >= 3])
+        if len(name_fragment) < 3:
+            return None
+        # Choose tables by explicit country hints when present; otherwise query both.
+        has_jb_hint = any(k in lower for k in ["jb","johor","johor bahru","bahru"])
+        has_sg_hint = any(k in lower for k in ["singapore","sg","s'g","lion city"]) and not has_jb_hint
+        if has_jb_hint:
+            tables = ["clinics_data"]
+        elif has_sg_hint:
+            tables = ["sg_clinics"]
+        else:
+            tables = ["clinics_data", "sg_clinics"]
+
+        # Try chosen tables; use ilike for case-insensitive substring match
+        matched = []
+        print(f"[DirectLookup] Trying direct name match for fragment: '{name_fragment}' in tables: {tables}")
+        for tbl in tables:
+            try:
+                resp = supabase.table(tbl).select("*").ilike("name", f"%{name_fragment}%").execute()
+                data = resp.data or []
+                # Annotate country if missing
+                for c in data:
+                    if 'country' not in c or not c['country']:
+                        c['country'] = 'SG' if tbl == 'sg_clinics' else 'MY'
+                matched.extend(data)
+            except Exception as e:
+                print(f"[DirectLookup] Query error on {tbl}: {e}")
+        if not matched:
+            return None
+        # Prefer exact-ish matches first (token containment), then fall back to first result
+        def score(clinic):
+            n = clinic.get('name', '').lower()
+            score_val = 0
+            for t in distinct_tokens:
+                if t in n:
+                    score_val += 1
+            return score_val
+        matched.sort(key=score, reverse=True)
+        # Enforce minimum score (at least one distinct token contained)
+        if score(matched[0]) < 1:
+            return None
+        clinic = matched[0]
+        # Clean embedding fields if present
+        clinic_clean = {k: v for k, v in clinic.items() if k not in {"embedding", "embedding_arr"}}
+        clinic_clean['tags'] = derive_clinic_tags(clinic_clean)
+        # Provide a Google Maps direction link stub if address present (origin left blank for front-end user input)
+        address = clinic_clean.get('address')
+        if address:
+            from urllib.parse import quote_plus
+            clinic_clean['maps_link'] = f"https://www.google.com/maps/dir/?api=1&destination={quote_plus(address)}"
+        response_text = (
+            f"Clinic details for **{clinic_clean.get('name','Unknown Clinic')}**:\n"
+            f"Address: {address or 'Not available'}\n"
+            f"Rating: {clinic_clean.get('rating','N/A')} ({clinic_clean.get('reviews','N/A')} reviews)\n"
+            f"Country: {clinic_clean.get('country','Unknown')}\n"
+            + ("\nYou can start a booking by telling me you want to book here, or ask for travel directions."))
+        # Provide state_update so downstream logic can remember country preference
+        country = clinic_clean.get('country')
+        loc_pref = 'sg' if country == 'SG' else ('jb' if country == 'MY' else None)
+        state_update_local = {}
+        if loc_pref:
+            state_update_local = {"location_preference": loc_pref, "awaiting_location": False}
+        print(f"[DirectLookup] Clinic matched: {clinic_clean.get('name')} ({clinic_clean.get('country')}) with score {score(matched[0])}")
+        return {
+            "response": response_text,
+            "applied_filters": {"direct_clinic": clinic_clean.get('name'), "country": clinic_clean.get('country')},
+            "candidate_pool": [clinic_clean],
+            "booking_context": {},
+            "meta": {"type": "clinic_detail"},
+            "state_update": state_update_local
+        }
+
+    direct_clinic_result = attempt_direct_clinic_lookup(latest_user_message)
+    if direct_clinic_result:
+        return direct_clinic_result
 
     # Known township-to-country hints to improve inference and avoid wrong-table queries
     TOWNSHIP_COUNTRY_MAP = {
@@ -70,7 +182,14 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             function_call = factual_response.candidates[0].content.parts[0].function_call
             if function_call and function_call.args:
                 args = function_call.args
-                if args.get('service'): current_filters['services'] = [args.get('service')]
+                if args.get('service'):
+                    # Multi-service stacking: merge with previous filters if present
+                    extracted = args.get('service')
+                    prior_services = []
+                    if isinstance(previous_filters, dict) and 'services' in previous_filters and isinstance(previous_filters['services'], list):
+                        prior_services = previous_filters['services']
+                    merged = list(dict.fromkeys([*(prior_services or []), extracted]))  # de-duplicate preserving order
+                    current_filters['services'] = merged
                 if args.get('township'): current_filters['township'] = args.get('township')
         print(f"Factual Brain extracted: {current_filters}")
     except Exception as e:
@@ -115,9 +234,14 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # If no service extracted, or extracted one conflicts with an obvious heuristic match, prefer heuristic
     heuristic_svc = heuristic_service_from_text(latest_user_message)
     if heuristic_svc:
-        if 'services' not in current_filters or (current_filters['services'] and current_filters['services'][0] != heuristic_svc):
+        if 'services' not in current_filters:
             current_filters['services'] = [heuristic_svc]
             print(f"[Heuristic] Service set to '{heuristic_svc}' from user text fallback")
+        else:
+            # Add if not already present
+            if heuristic_svc not in current_filters['services']:
+                current_filters['services'].append(heuristic_svc)
+                print(f"[Heuristic] Added additional service '{heuristic_svc}' (multi-service stacking)")
 
     if 'township' in current_filters and current_filters['township']:
         current_filters['township'] = current_filters['township'].rstrip(string.punctuation).strip()
@@ -441,7 +565,11 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
 
     context = json.dumps([{"position": i + 1, **{k: clinic.get(k) for k in ['name', 'address', 'rating', 'reviews', 'website_url', 'operating_hours']}} for i, clinic in enumerate(top_clinics)], indent=2)
  
-    augmented_prompt = f'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. Present the top 3 clinics clearly. Do not output raw JSON. **Data:**\n```json\n{context}\n```'
+    augmented_prompt = (
+        'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. '
+        'Present the top 3 clinics clearly. Start with a one-line explanation: "Top 3 clinics chosen by rating and review volume." '
+        'Do not output raw JSON. **Data:**\n```json\n' + context + '\n```'
+    )
 
     
     response_text = ""
@@ -459,7 +587,11 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         for clinic in top_clinics:
             fallback_list.append(f"- **{clinic.get('name')}** (Rating: {clinic.get('rating')}, Reviews: {clinic.get('reviews')})")
         
-        response_text = "I found a few highly-rated clinics for you:\n" + "\n".join(fallback_list) + "\n\nWould you like to book an appointment at one of these locations?"
+        response_text = (
+            "Top 3 clinics chosen by rating and review volume.\n\n"
+            + "I found a few highly-rated clinics for you:\n" + "\n".join(fallback_list)
+            + "\n\nWould you like to book an appointment at one of these locations?"
+        )
 
     # --- THIS IS THE FIX: Clean the vectors and add a debug print ---
     cleaned_candidate_pool = []
@@ -484,9 +616,9 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         final_filters['country'] = 'SG' if location_preference == 'sg' else ('MY' if location_preference == 'jb' else 'SG+MY')
 
     final_response_data = {
-        "response": response_text, 
+        "response": response_text,
         "applied_filters": final_filters,
-        "candidate_pool": cleaned_candidate_pool, # Use the new, clean list
+        "candidate_pool": cleaned_candidate_pool,  # Use the new, clean list
         "booking_context": {}
     }
 
