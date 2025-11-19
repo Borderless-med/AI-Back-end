@@ -321,14 +321,24 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     # Override misclassifications: if message clearly asks to find/recommend clinics OR mentions a service, force FIND_CLINIC
     if intent in {ChatIntent.GENERAL_DENTAL_QUESTION, ChatIntent.OUT_OF_SCOPE}:
-        search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment"]
+        search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "nearby"]
         service_triggers = [
             "cleaning","scale","scaling","polish","root canal","implant","whitening","crown",
             "filling","braces","wisdom tooth","gum treatment","veneers","tmj","sleep apnea"
         ]
-        if any(k in lower_msg for k in search_triggers) or any(k in lower_msg for k in service_triggers):
-            print(f"[trace:{trace_id}] [INFO] Heuristic override: Detected search/service keyword; forcing FIND_CLINIC")
+        # Question-style openers: treat as informational unless explicit search verbs present
+        question_starts = [
+            "what ","what's","what is","how ","how's","how does","why ","does ","is ","are ","difference","explain","tell me about","tell me all about","what are"
+        ]
+        is_question_style = lower_msg.endswith("?") or any(lower_msg.startswith(q) for q in question_starts)
+        has_search_trigger = any(k in lower_msg for k in search_triggers)
+        has_service_trigger = any(k in lower_msg for k in service_triggers)
+        # Only override if a search trigger exists OR a service trigger exists WITHOUT question style.
+        if has_search_trigger or (has_service_trigger and not is_question_style):
+            print(f"[trace:{trace_id}] [INFO] Heuristic override engaged (search={has_search_trigger}, service={has_service_trigger}, question_style={is_question_style}) -> FIND_CLINIC")
             intent = ChatIntent.FIND_CLINIC
+        else:
+            print(f"[trace:{trace_id}] [INFO] Retaining Q&A intent (question_style={is_question_style}, search={has_search_trigger}, service={has_service_trigger})")
 
     response_data = {}
     if intent == ChatIntent.FIND_CLINIC:
