@@ -1,6 +1,7 @@
 import json
 import string
 import google.generativeai as genai
+from difflib import SequenceMatcher
 from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -94,21 +95,48 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 matched.extend(data)
             except Exception as e:
                 print(f"[DirectLookup] Query error on {tbl}: {e}")
+        # If no results with the full fragment, try token-wise queries to be tolerant to typos/extra words
+        if not matched:
+            for tok in distinct_tokens:
+                if len(tok) < 3:
+                    continue
+                for tbl in tables:
+                    try:
+                        resp = supabase.table(tbl).select("*").ilike("name", f"%{tok}%").execute()
+                        data = resp.data or []
+                        for c in data:
+                            if 'country' not in c or not c['country']:
+                                c['country'] = 'SG' if tbl == 'sg_clinics' else 'MY'
+                        matched.extend(data)
+                    except Exception as e:
+                        print(f"[DirectLookup] Token query error on {tbl} for '{tok}': {e}")
+            # Deduplicate by id or name
+            seen = set()
+            deduped = []
+            for c in matched:
+                key = c.get('id') or c.get('name')
+                if key not in seen:
+                    deduped.append(c)
+                    seen.add(key)
+            matched = deduped
         if not matched:
             return None
         # Prefer exact-ish matches first (token containment), then fall back to first result
         def score(clinic):
             n = clinic.get('name', '').lower()
-            score_val = 0
-            for t in distinct_tokens:
-                if t in n:
-                    score_val += 1
-            return score_val
+            token_hits = sum(1 for t in distinct_tokens if t in n)
+            sim = SequenceMatcher(None, name_fragment, n).ratio()
+            # Weighted score: prioritize token containment, then similarity
+            return (token_hits * 1.0) + (sim * 2.0)
         matched.sort(key=score, reverse=True)
-        # Enforce minimum score (at least one distinct token contained)
-        if score(matched[0]) < 1:
+        best = matched[0]
+        best_tokens = sum(1 for t in distinct_tokens if t in best.get('name', '').lower())
+        best_sim = SequenceMatcher(None, name_fragment, best.get('name', '').lower()).ratio()
+        # Require either at least one token hit OR strong similarity (>= 0.78)
+        if best_tokens < 1 and best_sim < 0.78:
+            print(f"[DirectLookup] Fuzzy match below threshold (tokens={best_tokens}, sim={best_sim:.2f}); aborting direct lookup.")
             return None
-        clinic = matched[0]
+        clinic = best
         # Clean embedding fields if present
         clinic_clean = {k: v for k, v in clinic.items() if k not in {"embedding", "embedding_arr"}}
         clinic_clean['tags'] = derive_clinic_tags(clinic_clean)
@@ -129,7 +157,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         state_update_local = {}
         if loc_pref:
             state_update_local = {"location_preference": loc_pref, "awaiting_location": False}
-        print(f"[DirectLookup] Clinic matched: {clinic_clean.get('name')} ({clinic_clean.get('country')}) with score {score(matched[0])}")
+        print(f"[DirectLookup] Clinic matched: {clinic_clean.get('name')} ({clinic_clean.get('country')}) with score {score(best):.2f}")
         return {
             "response": response_text,
             "applied_filters": {"direct_clinic": clinic_clean.get('name'), "country": clinic_clean.get('country')},
