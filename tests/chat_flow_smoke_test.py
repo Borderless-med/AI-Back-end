@@ -1,13 +1,19 @@
 """Basic smoke tests for chat endpoint.
 Run locally with: python -m pytest -q tests/chat_flow_smoke_test.py
 Requires environment vars for SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET and a valid test JWT.
-Replace TEST_JWT below with a valid token (aud=authenticated).
+You can set TEST_JWT via environment variable, else replace the fallback below.
 """
+import os
+import pytest
 from fastapi.testclient import TestClient
 from main import app
 
-# IMPORTANT: Insert a valid JWT for your Supabase project to test authenticated /chat calls.
-TEST_JWT = "REPLACE_WITH_VALID_JWT"  # e.g. from a logged-in session
+# IMPORTANT: Provide a valid JWT for your Supabase project to test authenticated /chat calls.
+TEST_JWT = os.getenv("TEST_JWT", "REPLACE_WITH_VALID_JWT")  # e.g. from a logged-in session
+
+# Skip the whole module if JWT is not configured to avoid false failures.
+if TEST_JWT == "REPLACE_WITH_VALID_JWT":
+    pytest.skip("Set TEST_JWT env var (aud=authenticated) to run smoke tests.", allow_module_level=True)
 
 client = TestClient(app)
 
@@ -95,6 +101,42 @@ def test_booking_flow_affirmative_transition():
     # Should move into confirming_details or gathering_info
     booking_ctx = data2.get("booking_context", {})
     assert booking_ctx.get("status") in {"confirming_details", "gathering_info"}
+
+
+def test_qm_brand_typo_direct_detail():
+    """Brand with typo should return a single Q&M branch detail card."""
+    payload = {
+        "history": [{"role": "user", "content": "Q & M Dentel singapore"}]
+    }
+    r = client.post("/chat", json=payload, headers=auth_headers())
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("meta", {}).get("type") == "clinic_detail"
+    assert len(data.get("candidate_pool", [])) == 1
+    # country should be SG for this query
+    assert data.get("applied_filters", {}).get("country") == "SG"
+
+
+def test_qm_brand_variants():
+    """Q&M brand variants should also resolve to a direct detail card."""
+    for utterance in ["Q and M dental", "q&m dental"]:
+        payload = {"history": [{"role": "user", "content": utterance}]}
+        r = client.post("/chat", json=payload, headers=auth_headers())
+        assert r.status_code == 200, (utterance, r.text)
+        data = r.json()
+        assert data.get("meta", {}).get("type") == "clinic_detail"
+        assert len(data.get("candidate_pool", [])) == 1
+
+
+def test_nonsense_name_no_direct_match():
+    """Nonsense clinic name should not fall back to generic top-3; return no-match."""
+    payload = {"history": [{"role": "user", "content": "Zeta Smile Hub JB"}]}
+    r = client.post("/chat", json=payload, headers=auth_headers())
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # Expect explicit no-match meta and empty candidate list
+    assert data.get("meta", {}).get("type") == "no_direct_match"
+    assert len(data.get("candidate_pool", [])) == 0
 
 if __name__ == "__main__":
     # Simple manual run without pytest
