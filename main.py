@@ -57,6 +57,7 @@ class ChatIntent(str, Enum):
     CANCEL_BOOKING = "cancel_booking"
     GENERAL_DENTAL_QUESTION = "general_dental_question"
     REMEMBER_SESSION = "remember_session"
+    TRAVEL_FAQ = "travel_faq"
     OUT_OF_SCOPE = "out_of_scope"
 
 # --- Location & intent configuration additions ---
@@ -303,7 +304,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     if intent is None:
         try:
-            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.\nUser message: \"{latest_user_message}\"\nPossible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.\nRespond with ONLY one of the possible intents, and nothing else."""
+            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.\nUser message: \"{latest_user_message}\"\nPossible intents are: find_clinic, book_appointment, general_dental_question, remember_session, travel_faq, out_of_scope.\nRespond with ONLY one of the possible intents, and nothing else."""
             gk_response = gatekeeper_model.generate_content(gatekeeper_prompt)
             print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{gk_response.text}'")
             parsed_intent = gk_response.text.strip().lower()
@@ -316,10 +317,10 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
-    # --- Travel intent override ---
+    # --- Travel intent direct handling ---
     travel_keywords = extract_keywords(latest_user_message)
-    if (intent in {ChatIntent.OUT_OF_SCOPE, ChatIntent.GENERAL_DENTAL_QUESTION}) and travel_keywords:
-        print(f"[trace:{trace_id}] [INFO] Travel keywords detected ({travel_keywords}); overriding intent to travel_faq.")
+    if intent == ChatIntent.TRAVEL_FAQ or ((intent in {ChatIntent.OUT_OF_SCOPE, ChatIntent.GENERAL_DENTAL_QUESTION}) and travel_keywords):
+        print(f"[trace:{trace_id}] [INFO] Travel intent detected ({travel_keywords}); handling via travel_faq flow.")
         travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
         if travel_resp:
             response_data = travel_resp
