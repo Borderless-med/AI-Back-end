@@ -1,19 +1,32 @@
 """Basic smoke tests for chat endpoint.
 Run locally with: python -m pytest -q tests/chat_flow_smoke_test.py
-Requires environment vars for SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET and a valid test JWT.
-You can set TEST_JWT via environment variable, else replace the fallback below.
+
+If TEST_JWT is not provided, attempt to generate one using SUPABASE_JWT_SECRET for ephemeral testing.
 """
 import os
+import time
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from main import app
 
-# IMPORTANT: Provide a valid JWT for your Supabase project to test authenticated /chat calls.
-TEST_JWT = os.getenv("TEST_JWT", "REPLACE_WITH_VALID_JWT")  # e.g. from a logged-in session
+TEST_JWT = os.getenv("TEST_JWT")
+if not TEST_JWT:
+    secret = os.getenv("SUPABASE_JWT_SECRET")
+    if secret:
+        payload = {
+            "sub": "00000000-0000-0000-0000-000000000001",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+            "role": "authenticated",
+        }
+        try:
+            TEST_JWT = jwt.encode(payload, secret, algorithm="HS256")
+        except Exception:
+            TEST_JWT = None
 
-# Skip the whole module if JWT is not configured to avoid false failures.
-if TEST_JWT == "REPLACE_WITH_VALID_JWT":
-    pytest.skip("Set TEST_JWT env var (aud=authenticated) to run smoke tests.", allow_module_level=True)
+if not TEST_JWT:
+    pytest.skip("No TEST_JWT available and failed to generate from SUPABASE_JWT_SECRET", allow_module_level=True)
 
 client = TestClient(app)
 

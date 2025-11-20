@@ -32,6 +32,7 @@ from services.session_service import add_conversation_message
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
+from flows.travel_flow import handle_travel_query, extract_keywords
 from flows.outofscope_flow import handle_out_of_scope
 from flows.remember_flow import handle_remember_session
 
@@ -297,16 +298,12 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             intent = ChatIntent.BOOK_APPOINTMENT
         elif user_reply in negative_responses:
             intent = ChatIntent.CANCEL_BOOKING
-            
     elif booking_context.get('status') == 'gathering_info':
         intent = ChatIntent.BOOK_APPOINTMENT
 
     if intent is None:
         try:
-            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.
-            User message: "{latest_user_message}"
-            Possible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.
-            Respond with ONLY one of the possible intents, and nothing else."""
+            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.\nUser message: \"{latest_user_message}\"\nPossible intents are: find_clinic, book_appointment, general_dental_question, remember_session, out_of_scope.\nRespond with ONLY one of the possible intents, and nothing else."""
             gk_response = gatekeeper_model.generate_content(gatekeeper_prompt)
             print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{gk_response.text}'")
             parsed_intent = gk_response.text.strip().lower()
@@ -318,6 +315,23 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         except Exception as e:
             print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
+
+    # --- Travel intent override ---
+    travel_keywords = extract_keywords(latest_user_message)
+    if (intent in {ChatIntent.OUT_OF_SCOPE, ChatIntent.GENERAL_DENTAL_QUESTION}) and travel_keywords:
+        print(f"[trace:{trace_id}] [INFO] Travel keywords detected ({travel_keywords}); overriding intent to travel_faq.")
+        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
+        if travel_resp:
+            response_data = travel_resp
+            updated_history = [msg.dict() for msg in query.history]
+            updated_history.append({"role": "assistant", "content": response_data["response"]})
+            try:
+                add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+            except Exception as e:
+                logging.error(f"Failed to log assistant message: {e}")
+            update_session(session_id, secure_user_id, state, updated_history)
+            response_data["session_id"] = session_id
+            return response_data
 
     # Override misclassifications: if message clearly asks to find/recommend clinics OR mentions a service, force FIND_CLINIC
     if intent in {ChatIntent.GENERAL_DENTAL_QUESTION, ChatIntent.OUT_OF_SCOPE}:
@@ -340,8 +354,16 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         else:
             print(f"[trace:{trace_id}] [INFO] Retaining Q&A intent (question_style={is_question_style}, search={has_search_trigger}, service={has_service_trigger})")
 
-    response_data = {}
-    if intent == ChatIntent.FIND_CLINIC:
+    # Travel flow pre-check: conservative threshold (2 keywords)
+    travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=2)
+    if travel_resp:
+        response_data = travel_resp
+    else:
+        response_data = {}
+    if response_data:
+        # travel flow already handled; skip other flows
+        pass
+    elif intent == ChatIntent.FIND_CLINIC:
         # Global RESET handling: if user requests reset, clear server state and force location prompt
         if lower_msg.startswith("reset") or lower_msg.strip() in {"reset", "start over"}:
             print(f"[trace:{trace_id}] [INFO] Reset requested. Clearing filters and forcing location prompt.")

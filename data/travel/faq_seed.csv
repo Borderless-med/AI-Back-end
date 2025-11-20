@@ -1,0 +1,21 @@
+id,category,question,answer,tags,last_updated
+1,preparation,What documents do I need to cross?,You need a valid passport (ideally 6+ months left). If driving a Singapore car into Malaysia you also need a valid VEP registration and Touch 'n Go card for tolls.,passport|vep|touch_n_go,2025-11-19
+2,preparation,Do I need travel insurance for a dental visit?,Not mandatory, but basic travel/medical insurance helps if treatment becomes more complex.,insurance|dental,2025-11-19
+3,preparation,What should I bring for a dental appointment in JB?,Passport, payment method (card + some cash), past x‑rays if available, and your appointment confirmation.,checklist|appointment,2025-11-19
+4,timing,When is the Causeway most crowded?,Weekday mornings (7–9:30 AM) SG→JB and evenings (5–8 PM) JB→SG; weekends early morning can also be busy.,causeway|peak,2025-11-19
+5,timing,Best time to cross to avoid jams?,Midday (10 AM–3 PM) or late evening after 9 PM usually lighter.,causeway|timing,2025-11-19
+6,travel_time,How long does crossing usually take off-peak?,Often 20–35 minutes door to door (SG checkpoint to JB checkpoint) if traffic is light.,time|off_peak,2025-11-19
+7,travel_time,How long does crossing take at peak?,It can stretch to 60–120 minutes including queue lines.,time|peak,2025-11-19
+8,travel_cost,How much does a bus trip cost?,Public bus is usually a few dollars (SGD) each way; cross-border express buses slightly higher.,cost|bus,2025-11-19
+9,travel_cost,How much does a taxi or ride-hail cost?,Taxi/Grab from central Singapore to JB clinics can range roughly SGD 40–70 depending on surge and drop-off.,cost|taxi|grab,2025-11-19
+10,travel_options,What are my transport options?,Bus, train shuttle (if operating), taxi/ride-hail, private car, or carpool. Walking is possible but not comfy in heavy traffic.,bus|taxi|train|car,2025-11-19
+11,travel_options,Is the Shuttle Tebrau running?,Service schedules can change; check official KTM announcements for the latest status.,train|ktm,2025-11-19
+12,immigration,Do I need to fill any arrival card?,Singapore side requires an SG Arrival Card for most visitors; Malaysia currently does not require an online arrival card for short visits. Verify official sites before travel.,arrival_card|immigration,2025-11-19
+13,immigration,What if my passport is expiring soon?,Less than 6 months remaining can cause questioning; renew early to avoid issues.,passport|expiry,2025-11-19
+14,pitfalls,Common mistakes to avoid?,Forgetting Touch 'n Go top-up, not checking peak times, missing VEP registration when driving, or booking too tight a clinic time after peak crossing.,pitfalls|tips,2025-11-19
+15,pitfalls,Should I plan buffer time before my appointment?,Yes—add 45–60 minutes extra if crossing near peak periods.,buffer|timing,2025-11-19
+16,ciq_to_clinic,How do I get from JB CIQ to most dental clinics?,Short taxi or Grab ride (10–25 minutes) to areas like Mount Austin or Molek; bus routes exist but slower.,ciq|clinic|transport,2025-11-19
+17,home_to_ciq,How do I reach the border from Woodlands?,You can take local bus to Woodlands Checkpoint then cross, or taxi/Grab directly if you prefer speed.,woodlands|border,2025-11-19
+18,home_to_ciq,How do I reach the border from central Singapore?,MRT to Woodlands or Kranji then bus to checkpoint; or direct taxi/Grab for convenience.,mrt|central|border,2025-11-19
+19,travel_time,How long from CIQ to Mount Austin area?,Usually 20–30 minutes by car off-peak; 35–50 minutes peak.,mount_austin|time,2025-11-19
+20,travel_cost,What extra driving costs should I expect?,Tolls (Touch 'n Go), potential VEP fees, parking at clinic area, and fuel. Top up your Touch 'n Go before entering Malaysia.,driving|costs,2025-11-19
