@@ -1,0 +1,86 @@
+id,category,question,answer,tags,last_updated
+1,preparation,What documents do I need to cross?,Valid passport; if driving Singapore car into Malaysia also VEP registration + Touch 'n Go card.,passport|vep|touch_n_go,2025-11-19
+2,preparation,How long should my passport be valid?,Keep 6+ months remaining to avoid questioning.,passport|validity,2025-11-19
+3,preparation,Do I need travel insurance for a dental visit?,Not required; basic travel/medical cover is smart for surprises.,insurance|dental,2025-11-19
+4,preparation,Should I bring my old dental x-rays?,Yes—can avoid repeat imaging and save time.,xray|records,2025-11-19
+5,preparation,What appointment proof should I carry?,Digital confirmation (email/message) is fine.,appointment|proof,2025-11-19
+6,preparation,Do I need cash or are cards enough?,Carry both: clinics usually take cards; small purchases need MYR cash.,cash|card,2025-11-19
+7,preparation,Can I bring prescription meds across?,Yes in personal-use amounts; keep original packaging.,meds|personal_use,2025-11-19
+8,preparation,Do I need to declare dental items?,No—personal care items like whitening gel are fine.,whitening|declare,2025-11-19
+9,timing,When is the Causeway busiest?,Weekday AM (7–9:30 SG→JB) and PM (5–8 JB→SG); early weekend mornings too.,causeway|peak,2025-11-19
+10,timing,Best time to cross to avoid jams?,Mid-morning (10–3) or late night after 9 PM.,causeway|avoid_jam|top10,2025-11-19
+11,timing,How early should I leave for a 10 AM JB appointment?,About 8 AM on weekdays (buffer for queues).,buffer|appointment,2025-11-19
+12,timing,Are Friday evenings slow returning?,Yes—often 1–2 hour queues back to SG.,friday|return,2025-11-19
+13,timing,Do school holidays increase traffic?,Yes—more family travel and longer car lines.,school_holiday|traffic,2025-11-19
+14,timing,Does rain worsen crossing time?,Often yes—slower driving and cautious queues.,rain|delay,2025-11-19
+15,crossing_process,What is the order when crossing?,SG exit → Causeway → JB CIQ immigration → onward transport.,process|sequence,2025-11-19
+16,crossing_process,Do I fill any forms at JB CIQ?,Not for short dental visits—passport scan & fingerprint only.,ciq|forms,2025-11-19
+17,crossing_process,Are there separate lines?,Yes: cars, buses, motorcycles, pedestrians.,lines|checkpoint,2025-11-19
+18,crossing_process,Can pedestrians cross comfortably?,Possible but noisy & exposed—bus or vehicle easier.,pedestrian|comfort,2025-11-19
+19,crossing_process,Are toilets available at checkpoints?,Limited basic facilities—use early.,toilet|checkpoint,2025-11-19
+20,crossing_process,Can minors cross alone?,Not advised; bring consent docs if one parent absent.,minor|consent,2025-11-19
+21,crossing_process,What if I lose my passport in JB?,Report to police; contact embassy/high commission quickly.,lost_passport|emergency,2025-11-19
+22,transport,What transport modes can I use?,Bus, train shuttle (if active), taxi/ride-hail, private car.,modes|overview,2025-11-19
+23,transport,Is the Shuttle Tebrau running?,Schedule can change or pause; verify latest times & ticket availability early on the official KTM site: https://www.ktmb.com.my/ (tickets can sell out fast).,ktm|shuttle|dynamic|link,2025-11-19
+24,transport,Bus or taxi—what’s faster?,Taxi/Grab saves time; bus is cheaper but slower.,bus|taxi,2025-11-19
+25,transport,Is Grab available at JB CIQ?,Yes—usually available around CIQ and malls.,grab|availability,2025-11-19
+26,transport,How do I reach Mount Austin from JB CIQ?,Taxi/Grab ~20–30 min off-peak.,mount_austin|taxi,2025-11-19
+27,transport,Can I walk to clinics from CIQ?,Only very near spots; most clinic zones need transport.,walk|distance,2025-11-19
+28,transport,How do I get from Woodlands to Johor CIQ?,MRT/bus to Woodlands or Kranji then cross-border bus (e.g. 170/160/950 or CW buses).,woodlands|route|top10,2025-11-19
+29,transport,How do I get from central Singapore to Johor CIQ?,MRT to Kranji/Woodlands then cross-border bus; taxi/Grab if you want direct.,central|route,2025-11-19
+30,transport,Which bus numbers cross the Causeway?,Public: 160, 170, 170X, 950. Private Causeway Link (CW) & TS services vary by origin (e.g. CW1 from Kranji). Timetables adjust—check operator sites for latest.,bus|numbers|dynamic,2025-11-19
+31,costs,Bus cost each way?,Usually low single digits (a few SGD or RM); fares can adjust—confirm at ticket counter or operator site.,bus|cost|dynamic,2025-11-19
+32,costs,Taxi/Grab Singapore → JB clinic cost?,Commonly SGD 40–70 off‑peak; can exceed this with surge or heavy jams—always check the live estimate in the Grab app first.,taxi|grab|cost|dynamic,2025-11-19
+33,costs,Taxi vs bus cost gap?,Taxi often 10–20× bus price (time vs money trade); multiplier varies with surge—compare live Grab fare against posted bus fare.,comparison|cost|dynamic,2025-11-19
+34,costs,Should I pay for treatment in SGD or MYR?,Clinics charge in MYR; pay in MYR or card.,payment|currency|top10,2025-11-19
+35,costs,Do clinics accept cards?,Most do; verify for small practices.,card|acceptance,2025-11-19
+36,costs,Do I need to tip?,No tipping norm for dental visits.,tipping|dental,2025-11-19
+37,driving,Do I need VEP for a Singapore car?,Yes—register before entering Malaysia via JPJ VEP portal: https://vep.jpj.gov.my/ (process or rules can update—verify before travel).,vep|requirement|link|dynamic,2025-11-19
+38,driving,How do I top up Touch ’n Go?,Kiosks, petrol stations, convenience stores, some mall machines; options evolve—refer to official info or app: https://www.touchngo.com.my/.,touch_n_go|topup|dynamic|link,2025-11-19
+39,driving,How much Touch ’n Go balance to carry?,RM30–50 covers tolls + buffer.,touch_n_go|balance,2025-11-19
+40,driving,Where can I park near clinics?,Street or plaza parking—check signage.,parking|clinic,2025-11-19
+41,driving,Is parking free?,Some free slots; malls charge modest hourly rates.,parking|fees,2025-11-19
+42,driving,What if I forget VEP registration?,Risk fines—complete registration before driving.,vep|penalty,2025-11-19
+43,driving,Are road signs clear to Mount Austin?,Generally yes—navigation apps help.,signs|navigation,2025-11-19
+44,driving,What if my car breaks down?,Call roadside assist; move to safe area; contact insurer.,breakdown|assist,2025-11-19
+45,clinic_travel,How far is JB CIQ to main clinic zones?,About 10–25 minutes off-peak by car.,distance|zones,2025-11-19
+46,clinic_travel,Can I shop after treatment?,Yes—avoid hard chewing after major work.,shopping|post_treatment,2025-11-19
+47,clinic_travel,Are evening JB appointments okay?,Yes—plan extra return time if near peak.,evening|appointment,2025-11-19
+48,clinic_travel,How late do clinics stay open?,Many early evening; some extended hours—confirm direct.,hours|clinic,2025-11-19
+49,clinic_travel,How to handle follow-up visits?,Book next slot before leaving or via clinic message; if you notice an issue after returning to Singapore, send clear photos & description so they can advise remotely or schedule a revisit.,followup|booking|cross_border,2025-11-19
+50,clinic_travel,Is Mount Austin same as Austin Heights?,Related area—Mount Austin includes several sub-zones.,mount_austin|area,2025-11-19
+51,health_safety,Are JB dental clinics modern?,Reputable ones are; you shortlist vetted options.,clinic|quality,2025-11-19
+52,health_safety,Can I eat right after treatment?,Soft foods only after extractions or major work.,post_treatment|diet,2025-11-19
+53,health_safety,What if I feel unwell at the checkpoint?,Seek help from officers; consider nearby clinic or return.,unwell|checkpoint,2025-11-19
+54,health_safety,Should I bring painkillers?,Yes for comfort—not antibiotics unless prescribed.,painkillers|prep,2025-11-19
+55,health_safety,Are pharmacies nearby?,Yes—most clinic districts have several.,pharmacy|availability,2025-11-19
+56,immigration,Any restricted items?,Avoid contraband; keep large meds quantities minimal.,restricted|items,2025-11-19
+57,immigration,Do I declare dental medications?,Personal-use prescriptions rarely need declaration.,meds|declare,2025-11-19
+58,immigration,Do I need a visa for short dental visits?,Most SG/MY citizens enjoy visa-free short stays; others check nationality rules.,visa|short_stay,2025-11-19
+59,immigration,How long can I stay for treatment?,Typical short-stay allowance (e.g. 30–90 days) varies by passport.,stay_length|treatment,2025-11-19
+60,pitfalls,Common first-timer mistakes?,Underestimating queues, forgetting Touch ’n Go, no VEP, tight appointment timing.,mistakes|first_time|top10,2025-11-19
+61,pitfalls,How much buffer before appointment?,Add 45–60 minutes if near peak times.,buffer|peak|top10,2025-11-19
+62,pitfalls,Backup plan if ride-hail surges?,Use bus, alternative ride-hail, or delay arrival.,surge|backup,2025-11-19
+63,pitfalls,What if clinic is fully booked?,Request cancellation list or nearby branch.,fully_booked|options,2025-11-19
+64,pitfalls,How to avoid getting lost after CIQ?,Pre-save route; confirm exact address & landmark.,lost|navigation,2025-11-19
+65,return_followup,Best time to return to Singapore?,Mid-afternoon or after 9 PM.,return|timing,2025-11-19
+66,return_followup,Avoid returning when?,Peak evening (5–8) and Sunday late afternoon.,return|avoid|top10,2025-11-19
+67,return_followup,Can I book transport for return?,Yes—schedule ride-hail or arrange pickup.,return|booking,2025-11-19
+68,return_followup,Is next-day return okay after major work?,Usually fine—confirm clinic-specific instructions.,followup|post_proc,2025-11-19
+69,insurance_records,Does Singapore insurance cover JB dental?,Often not for elective; check your policy details.,insurance|coverage,2025-11-19
+70,payments_currency,Should I exchange money before crossing?,Rates fluctuate; often slightly better inside Malaysia. Check a live FX source (e.g. https://www.xe.com/) before exchanging. Keep small SGD backup for initial expenses.,exchange|money|dynamic|link,2025-11-19
+71,payments_currency,Are foreign card fees high?,Enable travel notice & overseas usage to reduce declines; pay in MYR (avoid DCC). Typical FX fees ~1–3% but vary—check issuer. Keep backup card + some cash; ensure OTP/SMS works abroad.,card|fees|security|top10|dynamic,2025-11-19
+72,tech_connectivity,Will my mobile data work?,Options: (1) Local prepaid SIM/eSIM (Maxis/Celcom/Digi) ~RM10–30 starter packs, (2) Regional eSIM apps, (3) SG roaming daily pass (~SGD 5–10). Prices shift—compare at purchase; enable roaming only when needed.,mobile|data|top10|dynamic,2025-11-19
+73,tech_connectivity,Any useful apps for traffic?,Google Maps, Waze, official traffic cams.,apps|traffic,2025-11-19
+74,tech_connectivity,Should I share live location with clinic?,Helps if late—clinic can decide to hold slot.,live_location|clinic,2025-11-19
+75,edge_emergency,What if border systems slow?,Expect manual processing; patience—no shortcut.,system|slowdown,2025-11-19
+76,edge_emergency,What if sudden jam or closure?,Reschedule non-urgent treatment; watch official updates.,closure|jam,2025-11-19
+77,appointments,What if I’m late for my appointment?,Call or WhatsApp the clinic as soon as you know; many hold the slot 10–15 minutes, after ~20–30 minutes you may be requeued; share live location and ETA; if border delays are severe ask for the next available slot.,late|appointment|eta|top10,2025-11-19
+78,afterhours,Overnight dental pain — what should I do?,We can’t provide medical advice. If pain is severe, swelling or fever develops, or you have trouble breathing or swallowing, seek urgent care immediately. Otherwise, contact your clinic when it opens for professional assessment.,pain|afterhours|urgent|top10,2025-11-19
+79,clinic_experience,Will dentists and staff speak English?,Most JB clinics serving Singapore visitors have staff comfortable in English; if you need other languages (Mandarin/Malay) mention it when booking for smooth communication.,english|clinic_experience,2025-11-20
+80,payments_currency,Do clinics accept Singapore digital payments?,Some larger or SG‑focused clinics may offer PayNow/PayLah! or similar, but not guaranteed—plan for MYR card payment or cash as fallback.,digital_payments|paynow|fallback,2025-11-20
+81,post_treatment,Can I drink alcohol after my dental procedure?,We cannot give medical advice. Many people avoid alcohol for the rest of the day after invasive dental work—follow your dentist’s specific instructions.,alcohol|post_treatment|disclaimer,2025-11-20
+82,post_treatment,When can I eat hard food after extraction or implant?,We cannot give medical advice. Clinics often advise soft foods initially then gradual reintroduction—confirm the exact timeline with your dentist.,food|post_treatment|disclaimer,2025-11-20
+83,safety,Is it safe to travel to clinic areas alone in the evening?,Popular zones (e.g. Mount Austin) are generally active and well‑lit; use standard travel sense: stay in public areas, pre‑arrange transport, keep valuables minimal.,safety|evening|solo,2025-11-20
+84,return_followup,What if I need a follow-up but I’m back in Singapore?,Message the clinic (WhatsApp) with clear photos & description; they can advise remotely or schedule next in‑person visit—retain treatment notes & receipts.,followup|cross_border,2025-11-20
+85,meta,How current is this information?,General guidance accurate as of late 2025; dynamic items (costs, schedules, fees) can change—verify with official sources (KTM, JPJ VEP, Grab, FX sites) and review quarterly.,meta|disclaimer|currency,2025-11-20
