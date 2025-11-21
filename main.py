@@ -302,34 +302,17 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     elif booking_context.get('status') == 'gathering_info':
         intent = ChatIntent.BOOK_APPOINTMENT
 
-    if intent is None:
-        try:
-            gatekeeper_prompt = f"""Analyze the user's latest message and classify their intent.\nUser message: \"{latest_user_message}\"\nPossible intents are: find_clinic, book_appointment, general_dental_question, remember_session, travel_faq, out_of_scope.\nRespond with ONLY one of the possible intents, and nothing else."""
-            gk_response = gatekeeper_model.generate_content(gatekeeper_prompt)
-            print(f"[trace:{trace_id}] [DEBUG] Raw Gatekeeper Response Text: '{gk_response.text}'")
-            parsed_intent = gk_response.text.strip().lower()
-            if parsed_intent in [e.value for e in ChatIntent]:
-                intent = ChatIntent(parsed_intent)
-            else:
-                intent = ChatIntent.OUT_OF_SCOPE
-            print(f"[trace:{trace_id}] [INFO] Gatekeeper FINAL classified intent as: {intent.value}")
-        except Exception as e:
-            print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
-            intent = ChatIntent.OUT_OF_SCOPE
-
-    # --- Travel FAQ routing: run only if travel keywords or fuzzy match detected ---
+    # --- Travel FAQ routing: always run if travel keywords or fuzzy match detected ---
     travel_keywords = extract_keywords(latest_user_message)
-    # TODO: Integrate fuzzy matching here (see travel_flow.py for implementation)
+    travel_resp = None
     if travel_keywords:
         print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (keywords/fuzzy match: {travel_keywords})")
-        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)  # Update handle_travel_query to use fuzzy matching
-        if travel_resp:
-            response_data = travel_resp
-        else:
-            response_data = {
-                "response": "Sorry, I couldn't find a travel FAQ for your query. Please try rephrasing or check our travel guide at https://www.sg-jb-dental.com/travel-faq.",
-                "meta": {"type": "travel_faq_fallback"}
-            }
+        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
+    else:
+        # Try fuzzy match even if no keywords
+        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=0)
+    if travel_resp:
+        response_data = travel_resp
         updated_history = [msg.dict() for msg in query.history]
         updated_history.append({"role": "assistant", "content": response_data["response"]})
         try:
