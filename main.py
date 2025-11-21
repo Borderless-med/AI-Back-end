@@ -317,10 +317,11 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
-    # --- Travel intent direct handling ---
+    # --- Travel FAQ routing: intent + keywords only ---
     travel_keywords = extract_keywords(latest_user_message)
-    if intent == ChatIntent.TRAVEL_FAQ or ((intent in {ChatIntent.OUT_OF_SCOPE, ChatIntent.GENERAL_DENTAL_QUESTION}) and travel_keywords):
-        print(f"[trace:{trace_id}] [INFO] Travel intent detected ({travel_keywords}); handling via travel_faq flow.")
+    # If intent is travel_faq OR travel keywords detected, route to travel flow
+    if intent == ChatIntent.TRAVEL_FAQ or travel_keywords:
+        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (intent={intent}, keywords={travel_keywords})")
         travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
         if travel_resp:
             response_data = travel_resp
@@ -341,29 +342,17 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             "cleaning","scale","scaling","polish","root canal","implant","whitening","crown",
             "filling","braces","wisdom tooth","gum treatment","veneers","tmj","sleep apnea"
         ]
-        # Question-style openers: treat as informational unless explicit search verbs present
         question_starts = [
             "what ","what's","what is","how ","how's","how does","why ","does ","is ","are ","difference","explain","tell me about","tell me all about","what are"
         ]
         is_question_style = lower_msg.endswith("?") or any(lower_msg.startswith(q) for q in question_starts)
         has_search_trigger = any(k in lower_msg for k in search_triggers)
         has_service_trigger = any(k in lower_msg for k in service_triggers)
-        # Only override if a search trigger exists OR a service trigger exists WITHOUT question style.
         if has_search_trigger or (has_service_trigger and not is_question_style):
             print(f"[trace:{trace_id}] [INFO] Heuristic override engaged (search={has_search_trigger}, service={has_service_trigger}, question_style={is_question_style}) -> FIND_CLINIC")
             intent = ChatIntent.FIND_CLINIC
         else:
             print(f"[trace:{trace_id}] [INFO] Retaining Q&A intent (question_style={is_question_style}, search={has_search_trigger}, service={has_service_trigger})")
-
-    # Travel flow pre-check: conservative threshold (2 keywords)
-    travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=2)
-    if travel_resp:
-        response_data = travel_resp
-    else:
-        response_data = {}
-    if response_data:
-        # travel flow already handled; skip other flows
-        pass
     elif intent == ChatIntent.FIND_CLINIC:
         # Global RESET handling: if user requests reset, clear server state and force location prompt
         if lower_msg.startswith("reset") or lower_msg.strip() in {"reset", "start over"}:
