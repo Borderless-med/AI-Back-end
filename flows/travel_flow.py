@@ -6,15 +6,17 @@ from .fuzzy_utils import fuzzy_match
 # Minimal keyword set for first cut. Tune via logs.
 TRAVEL_KEYWORDS = {
     # border and timing
-    "causeway", "checkpoint", "ciq", "border", "peak", "off-peak", "queue", "jam",
+    "causeway", "checkpoint", "ciq", "border", "peak", "off-peak", "queue", "jam", "cross", "crossing", "immigration",
     # transport
-    "bus", "160", "170", "170x", "950", "cw", "ts", "shuttle", "tebrau", "ktm", "grab", "taxi",
+    "bus", "160", "170", "170x", "950", "cw", "ts", "shuttle", "tebrau", "ktm", "grab", "taxi", "car", "train", "mrt", "public transport", "mode", "route", "travel mode",
     # driving and payments
-    "vep", "register vep", "vehicle entry permit", "vep portal", "vep registration", "touch n go", "touch ’n go", "touch 'n go", "tng", "parking",
+    "vep", "register vep", "vehicle entry permit", "vep portal", "vep registration", "touch n go", "touch ’n go", "touch 'n go", "tng", "parking", "pay", "payment", "digital payment",
     # areas
-    "mount austin", "austin", "molek", "skudai", "permas", "bukit indah",
+    "mount austin", "austin", "molek", "skudai", "permas", "bukit indah", "century garden", "jb town", "city square",
     # telecom and money
-    "sim", "esim", "roaming", "mobile data", "data", "dcc", "exchange", "fx", "rate",
+    "sim", "esim", "roaming", "mobile data", "data", "dcc", "exchange", "fx", "rate", "currency", "money", "cash", "apps", "wallet",
+    # time/day
+    "weekday", "weekend", "day", "time", "hour", "schedule", "duration", "how long", "best day", "best time",
 }
 
 
@@ -100,30 +102,41 @@ def build_structured_payload(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) -> Optional[Dict[str, Any]]:
+    import logging
+    logger = logging.getLogger("travel_flow")
     kw_hits = extract_keywords(user_text)
+    logger.info(f"User query: {user_text}")
+    logger.info(f"Keyword hits: {kw_hits}")
     candidates = []
+    best = None
     # If keyword match, use existing logic
     if len(kw_hits) >= keyword_threshold:
         candidates = query_candidates(supabase, kw_hits)
-        if not candidates:
-            return None
-        best = None
-        best_score = -1e9
-        for row in candidates:
-            s = score_row(row, kw_hits)
-            if s > best_score:
-                best_score = s
-                best = row
-        if not best:
-            return None
-    else:
+        logger.info(f"Keyword candidate count: {len(candidates)}")
+        if candidates:
+            best_score = -1e9
+            for row in candidates:
+                s = score_row(row, kw_hits)
+                logger.info(f"Candidate: {row.get('question')}, Score: {s}")
+                if s > best_score:
+                    best_score = s
+                    best = row
+            if not best:
+                logger.info("No best candidate found from keyword match.")
+        else:
+            logger.info("No candidates found from keyword match, falling back to fuzzy match.")
+    if not best:
         # Fuzzy match: get all FAQ questions from Supabase and find best match
         all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
         faq_questions = [row["question"] for row in all_faqs]
-        idx = fuzzy_match(user_text, faq_questions, threshold=70)
-        if idx is None:
+        idx = fuzzy_match(user_text, faq_questions, threshold=60)
+        logger.info(f"Fuzzy match index: {idx}")
+        if idx is not None:
+            best = all_faqs[idx]
+            logger.info(f"Fuzzy matched question: {best.get('question')}")
+        else:
+            logger.info("No fuzzy match found.")
             return None
-        best = all_faqs[idx]
     payload = build_structured_payload(best)
     disclaimer = ""
     if bool(best.get("dynamic")):
