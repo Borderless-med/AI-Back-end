@@ -317,11 +317,31 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
-    # --- Travel FAQ routing: intent + keywords only ---
+    # --- Travel FAQ routing: always run if intent is travel_faq ---
     travel_keywords = extract_keywords(latest_user_message)
-    # If intent is travel_faq OR travel keywords detected, route to travel flow
-    if intent == ChatIntent.TRAVEL_FAQ or travel_keywords:
+    if intent == ChatIntent.TRAVEL_FAQ:
         print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (intent={intent}, keywords={travel_keywords})")
+        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
+        if travel_resp:
+            response_data = travel_resp
+        else:
+            # Travel-specific fallback answer
+            response_data = {
+                "response": "Sorry, I couldn't find a travel FAQ for your query. Please try rephrasing or check our travel guide at https://www.sg-jb-dental.com/travel-faq.",
+                "meta": {"type": "travel_faq_fallback"}
+            }
+        updated_history = [msg.dict() for msg in query.history]
+        updated_history.append({"role": "assistant", "content": response_data["response"]})
+        try:
+            add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+        except Exception as e:
+            logging.error(f"Failed to log assistant message: {e}")
+        update_session(session_id, secure_user_id, state, updated_history)
+        response_data["session_id"] = session_id
+        return response_data
+    # If travel keywords detected (but not travel intent), still run travel FAQ flow
+    if travel_keywords:
+        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (keywords only: {travel_keywords})")
         travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
         if travel_resp:
             response_data = travel_resp
