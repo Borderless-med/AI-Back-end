@@ -1,5 +1,6 @@
 import re
 from typing import List, Dict, Any, Optional, Tuple
+from .fuzzy_utils import fuzzy_match
 
 
 # Minimal keyword set for first cut. Tune via logs.
@@ -100,23 +101,30 @@ def build_structured_payload(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) -> Optional[Dict[str, Any]]:
     kw_hits = extract_keywords(user_text)
-    if len(kw_hits) < keyword_threshold:
-        return None
-    candidates = query_candidates(supabase, kw_hits)
-    if not candidates:
-        return None
-    # Score and choose best one
-    best = None
-    best_score = -1e9
-    for row in candidates:
-        s = score_row(row, kw_hits)
-        if s > best_score:
-            best_score = s
-            best = row
-    if not best:
-        return None
+    candidates = []
+    # If keyword match, use existing logic
+    if len(kw_hits) >= keyword_threshold:
+        candidates = query_candidates(supabase, kw_hits)
+        if not candidates:
+            return None
+        best = None
+        best_score = -1e9
+        for row in candidates:
+            s = score_row(row, kw_hits)
+            if s > best_score:
+                best_score = s
+                best = row
+        if not best:
+            return None
+    else:
+        # Fuzzy match: get all FAQ questions from Supabase and find best match
+        all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
+        faq_questions = [row["question"] for row in all_faqs]
+        idx = fuzzy_match(user_text, faq_questions, threshold=70)
+        if idx is None:
+            return None
+        best = all_faqs[idx]
     payload = build_structured_payload(best)
-    # Also provide a plain answer for backward-compatible UIs
     disclaimer = ""
     if bool(best.get("dynamic")):
         disclaimer = "\n\nNote: Live information can change — please verify with official sources."

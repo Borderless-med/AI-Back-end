@@ -317,15 +317,15 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             print(f"[trace:{trace_id}] [ERROR] Gatekeeper model failed: {e}. Defaulting to OUT_OF_SCOPE.")
             intent = ChatIntent.OUT_OF_SCOPE
 
-    # --- Travel FAQ routing: always run if intent is travel_faq ---
+    # --- Travel FAQ routing: run only if travel keywords or fuzzy match detected ---
     travel_keywords = extract_keywords(latest_user_message)
-    if intent == ChatIntent.TRAVEL_FAQ:
-        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (intent={intent}, keywords={travel_keywords})")
-        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
+    # TODO: Integrate fuzzy matching here (see travel_flow.py for implementation)
+    if travel_keywords:
+        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (keywords/fuzzy match: {travel_keywords})")
+        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)  # Update handle_travel_query to use fuzzy matching
         if travel_resp:
             response_data = travel_resp
         else:
-            # Travel-specific fallback answer
             response_data = {
                 "response": "Sorry, I couldn't find a travel FAQ for your query. Please try rephrasing or check our travel guide at https://www.sg-jb-dental.com/travel-faq.",
                 "meta": {"type": "travel_faq_fallback"}
@@ -339,21 +339,6 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         update_session(session_id, secure_user_id, state, updated_history)
         response_data["session_id"] = session_id
         return response_data
-    # If travel keywords detected (but not travel intent), still run travel FAQ flow
-    if travel_keywords:
-        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (keywords only: {travel_keywords})")
-        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
-        if travel_resp:
-            response_data = travel_resp
-            updated_history = [msg.dict() for msg in query.history]
-            updated_history.append({"role": "assistant", "content": response_data["response"]})
-            try:
-                add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
-            except Exception as e:
-                logging.error(f"Failed to log assistant message: {e}")
-            update_session(session_id, secure_user_id, state, updated_history)
-            response_data["session_id"] = session_id
-            return response_data
 
     # Override misclassifications: if message clearly asks to find/recommend clinics OR mentions a service, force FIND_CLINIC
     if intent in {ChatIntent.GENERAL_DENTAL_QUESTION, ChatIntent.OUT_OF_SCOPE}:
