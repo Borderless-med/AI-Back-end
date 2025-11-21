@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 """Simple starter script to load travel FAQ rows from CSV into Supabase.
 Later you can extend this to add embeddings.
 

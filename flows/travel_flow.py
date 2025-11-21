@@ -129,13 +129,14 @@ def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) ->
         # Fuzzy match: get all FAQ questions from Supabase and find best match
         all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
         faq_questions = [row["question"] for row in all_faqs]
-        idx = fuzzy_match(user_text, faq_questions, threshold=60)
+        idx = fuzzy_match(user_text, faq_questions, threshold=75)
         logger.info(f"Fuzzy match index: {idx}")
         if idx is not None:
             best = all_faqs[idx]
             logger.info(f"Fuzzy matched question: {best.get('question')}")
         else:
-            logger.info("No fuzzy match found.")
+            logger.info("No fuzzy match found. Fallback to LLM triggered.")
+            # Explicit fallback: return None, upstream should call LLM
             return None
     payload = build_structured_payload(best)
     disclaimer = ""

@@ -6,9 +6,10 @@ def fuzzy_match(query: str, candidates: list, threshold: int = 60):
     logger = getLogger("travel_flow")
     matches = process.extract(query, candidates, scorer=fuzz.token_set_ratio)
     logger.info(f"Fuzzy match scores: {[{'match': m, 'score': s, 'idx': i} for m, s, i in matches]}")
+    logger.info(f"Fuzzy match threshold: {threshold}")
     for match, score, idx in matches:
         if score >= threshold:
             logger.info(f"Fuzzy match accepted: {match} (score: {score}, idx: {idx})")
             return idx  # Return index of best match
-    logger.info("No fuzzy match above threshold.")
+    logger.info("No fuzzy match above threshold. Fallback to LLM triggered.")
     return None
