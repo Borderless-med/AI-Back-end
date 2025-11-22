@@ -1,3 +1,26 @@
+SYNONYMS = {
+    "bus": ["bus", "coach", "cw", "shuttle"],
+    "mrt": ["mrt", "train", "subway", "station"],
+    "parking": ["parking", "car park", "park my car", "vehicle"],
+    "exchange": ["exchange", "money changer", "currency", "fx", "rate", "ringgit"],
+    "sim": ["sim", "esim", "mobile data", "roaming", "data"],
+    "vep": ["vep", "vehicle entry permit", "register vep", "vep portal"],
+    "touch n go": ["touch n go", "tng", "touch 'n go", "touch ’n go"],
+    "ktm": ["ktm", "train", "shuttle", "tebrau"],
+    "payment": ["payment", "pay", "digital payment", "card", "wallet", "apps"],
+    "checkpoint": ["checkpoint", "ciq", "border", "cross", "crossing", "immigration"],
+    "city square": ["city square", "jb town", "mall"],
+}
+
+def expand_query_with_synonyms(text: str) -> set:
+    terms = set()
+    words = text.lower().split()
+    for word in words:
+        if word in SYNONYMS:
+            terms.update(SYNONYMS[word])
+        else:
+            terms.add(word)
+    return terms
 import re
 from typing import List, Dict, Any, Optional, Tuple
 from .fuzzy_utils import fuzzy_match
@@ -104,40 +127,31 @@ def build_structured_payload(row: Dict[str, Any]) -> Dict[str, Any]:
 def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) -> Optional[Dict[str, Any]]:
     import logging
     logger = logging.getLogger("travel_flow")
-    kw_hits = extract_keywords(user_text)
     logger.info(f"User query: {user_text}")
-    logger.info(f"Keyword hits: {kw_hits}")
-    candidates = []
+    expanded_terms = expand_query_with_synonyms(user_text)
+    logger.info(f"Expanded query terms: {expanded_terms}")
+    # Pass 1: Filter FAQs by expanded keywords
+    all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
+    candidate_faqs = []
+    for row in all_faqs:
+        faq_text = (row.get("question") or "") + " " + (row.get("answer") or "")
+        if any(term in faq_text.lower() for term in expanded_terms):
+            candidate_faqs.append(row)
+    logger.info(f"Keyword candidate count: {len(candidate_faqs)}")
     best = None
-    # If keyword match, use existing logic
-    if len(kw_hits) >= keyword_threshold:
-        candidates = query_candidates(supabase, kw_hits)
-        logger.info(f"Keyword candidate count: {len(candidates)}")
-        if candidates:
-            best_score = -1e9
-            for row in candidates:
-                s = score_row(row, kw_hits)
-                logger.info(f"Candidate: {row.get('question')}, Score: {s}")
-                if s > best_score:
-                    best_score = s
-                    best = row
-            if not best:
-                logger.info("No best candidate found from keyword match.")
-        else:
-            logger.info("No candidates found from keyword match, falling back to fuzzy match.")
-    if not best:
-        # Fuzzy match: get all FAQ questions from Supabase and find best match
-        all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
-        faq_questions = [row["question"] for row in all_faqs]
-        idx = fuzzy_match(user_text, faq_questions, threshold=75)
+    if candidate_faqs:
+        faq_questions = [row["question"] for row in candidate_faqs]
+        idx = fuzzy_match(user_text, faq_questions, threshold=65)
         logger.info(f"Fuzzy match index: {idx}")
         if idx is not None:
-            best = all_faqs[idx]
+            best = candidate_faqs[idx]
             logger.info(f"Fuzzy matched question: {best.get('question')}")
         else:
-            logger.info("No fuzzy match found. Fallback to LLM triggered.")
-            # Explicit fallback: return None, upstream should call LLM
+            logger.info("No fuzzy match found in candidates. Fallback to LLM triggered.")
             return None
+    else:
+        logger.info("No candidates found after keyword/synonym filtering. Fallback to LLM triggered.")
+        return None
     payload = build_structured_payload(best)
     disclaimer = ""
     if bool(best.get("dynamic")):
