@@ -138,6 +138,10 @@ def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) ->
         if any(term in faq_text.lower() for term in expanded_terms):
             candidate_faqs.append(row)
     logger.info(f"Keyword candidate count: {len(candidate_faqs)}")
+    # Log candidate FAQ details and match scores
+    for idx, row in enumerate(candidate_faqs):
+        score = score_row(row, list(expanded_terms))
+        logger.info(f"Candidate {idx}: id={row.get('id')}, question={row.get('question')}, score={score}")
     best = None
     if candidate_faqs:
         faq_questions = [row["question"] for row in candidate_faqs]
@@ -146,6 +150,7 @@ def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) ->
         if idx is not None:
             best = candidate_faqs[idx]
             logger.info(f"Fuzzy matched question: {best.get('question')}")
+            logger.info(f"Fuzzy matched FAQ id: {best.get('id')}")
         else:
             logger.info("No fuzzy match found in candidates. Fallback to LLM triggered.")
             return None
