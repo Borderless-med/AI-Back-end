@@ -50,7 +50,7 @@ def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None
 
     # --- Step 2: Call the Supabase function to find matching FAQs ---
     # These parameters can be tuned.
-    match_threshold = 0.78  # The minimum similarity score to consider a match.
+    match_threshold = 0.50  # The minimum similarity score to consider a match.
     match_count = 3         # The maximum number of relevant documents to retrieve.
 
     try:
