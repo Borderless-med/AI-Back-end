@@ -1,170 +1,109 @@
-SYNONYMS = {
-    "bus": ["bus", "coach", "cw", "shuttle"],
-    "mrt": ["mrt", "train", "subway", "station"],
-    "parking": ["parking", "car park", "park my car", "vehicle"],
-    "exchange": ["exchange", "money changer", "currency", "fx", "rate", "ringgit"],
-    "sim": ["sim", "esim", "mobile data", "roaming", "data"],
-    "vep": ["vep", "vehicle entry permit", "register vep", "vep portal"],
-    "touch n go": ["touch n go", "tng", "touch 'n go", "touch ’n go"],
-    "ktm": ["ktm", "train", "shuttle", "tebrau"],
-    "payment": ["payment", "pay", "digital payment", "card", "wallet", "apps"],
-    "checkpoint": ["checkpoint", "ciq", "border", "cross", "crossing", "immigration"],
-    "city square": ["city square", "jb town", "mall"],
-}
+# flows/travel_flow.py (NEW REPLACEMENT CONTENT)
 
-def expand_query_with_synonyms(text: str) -> set:
-    terms = set()
-    words = text.lower().split()
-    for word in words:
-        if word in SYNONYMS:
-            terms.update(SYNONYMS[word])
-        else:
-            terms.add(word)
-    return terms
-import re
-from typing import List, Dict, Any, Optional, Tuple
-from .fuzzy_utils import fuzzy_match
+import os
+import google.generativeai as genai
+from supabase import Client
+import logging
 
+# It's good practice to get the model name from a central service if possible,
+# but defining it here is also fine for this specific flow.
+# Ensure this is the same model used for indexing: models/text-embedding-004
+EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 
-# Minimal keyword set for first cut. Tune via logs.
-TRAVEL_KEYWORDS = {
-    # border and timing
-    "causeway", "checkpoint", "ciq", "border", "peak", "off-peak", "queue", "jam", "cross", "crossing", "immigration",
-    # transport
-    "bus", "160", "170", "170x", "950", "cw", "ts", "shuttle", "tebrau", "ktm", "grab", "taxi", "car", "train", "mrt", "public transport", "mode", "route", "travel mode",
-    # driving and payments
-    "vep", "register vep", "vehicle entry permit", "vep portal", "vep registration", "touch n go", "touch ’n go", "touch 'n go", "tng", "parking", "pay", "payment", "digital payment",
-    # areas
-    "mount austin", "austin", "molek", "skudai", "permas", "bukit indah", "century garden", "jb town", "city square",
-    # telecom and money
-    "sim", "esim", "roaming", "mobile data", "data", "dcc", "exchange", "fx", "rate", "currency", "money", "cash", "apps", "wallet",
-    # time/day
-    "weekday", "weekend", "day", "time", "hour", "schedule", "duration", "how long", "best day", "best time",
-}
+# Configure the Gemini client (it should inherit the configuration from main.py,
+# but explicit configuration is safer if this file is ever run standalone).
+if not genai.get_model(EMBEDDING_MODEL_NAME):
+    gemini_api_key = os.getenv("Gemini_API_Key")
+    if not gemini_api_key:
+        raise ValueError("Gemini_API_Key not found in .env file for travel_flow")
+    genai.configure(api_key=gemini_api_key)
 
+# This is the generation model that will answer the question based on the context.
+# We can use a powerful model like Gemini 1.5 Pro or Flash.
+generation_model = genai.GenerativeModel('gemini-1.5-flash')
 
-def extract_keywords(text: str) -> List[str]:
-    t = text.lower()
-    hits = []
-    for k in TRAVEL_KEYWORDS:
-        if k in t:
-            hits.append(k)
-    return hits
+def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None:
+    """
+    Handles a user's travel-related query using a Semantic RAG approach.
 
+    Args:
+        user_query: The user's question.
+        supabase_client: The initialized Supabase client instance.
 
-def extract_links(text: str) -> List[Dict[str, str]]:
-    urls = re.findall(r"https?://[^\s)]+", text)
-    # Simple labeling: domain-based
-    labelled = []
-    for u in urls:
-        label = u
-        if "ktmb.com.my" in u:
-            label = "Official KTM Site"
-        elif "vep.jpj.gov.my" in u:
-            label = "JPJ VEP Portal"
-        elif "touchngo.com.my" in u:
-            label = "Touch 'n Go"
-        elif "xe.com" in u:
-            label = "XE Exchange Rates"
-        labelled.append({"text": label, "url": u})
-    return labelled
+    Returns:
+        A dictionary with the response if a relevant FAQ is found, otherwise None.
+    """
+    print(f"[TRAVEL_FLOW] Received query: '{user_query}'")
 
+    # --- Step 1: Generate an embedding for the user's query ---
+    try:
+        print("[TRAVEL_FLOW] Generating embedding for user query...")
+        query_embedding = genai.embed_content(
+            model=EMBEDDING_MODEL_NAME,
+            content=user_query,
+            task_type="RETRIEVAL_QUERY"  # Use 'RETRIEVAL_QUERY' for searching
+        )['embedding']
+        print("[TRAVEL_FLOW] Embedding generated successfully.")
+    except Exception as e:
+        logging.error(f"[TRAVEL_FLOW] Error generating embedding: {e}")
+        return None  # Cannot proceed without an embedding
 
-def score_row(row: Dict[str, Any], kw_hits: List[str]) -> float:
-    score = 0.0
-    tags = set((row.get("tags") or []))
-    # Tag overlap bonus
-    overlap = 0
-    for k in kw_hits:
-        if k in tags:
-            overlap += 1
-    score += overlap * 1.5
-    # Phrase presence in question/answer
-    q = (row.get("question") or "").lower()
-    a = (row.get("answer") or "").lower()
-    phrase_hits = sum(1 for k in kw_hits if (k in q or k in a))
-    score += phrase_hits * 1.0
-    # top10 boost
-    if row.get("top10"):
-        score += 2.0
-    # link presence boost
-    if extract_links(a):
-        score += 0.5
-    return score
+    # --- Step 2: Call the Supabase function to find matching FAQs ---
+    # These parameters can be tuned.
+    match_threshold = 0.78  # The minimum similarity score to consider a match.
+    match_count = 3         # The maximum number of relevant documents to retrieve.
 
+    try:
+        print(f"[TRAVEL_FLOW] Calling Supabase 'match_faqs' function with threshold {match_threshold}...")
+        # 'rpc' calls the database function we created
+        response = supabase_client.rpc('match_faqs', {
+            'query_embedding': query_embedding,
+            'match_threshold': match_threshold,
+            'match_count': match_count
+        }).execute()
+        
+        matching_faqs = response.data
+        print(f"[TRAVEL_FLOW] Found {len(matching_faqs)} potential matches.")
 
-def query_candidates(supabase, kw_hits: List[str]) -> List[Dict[str, Any]]:
-    # Build an OR filter across question/answer for present keywords
-    ors = []
-    for k in kw_hits:
-        like = f"%{k}%"
-        ors.append(f"question.ilike.{like}")
-        ors.append(f"answer.ilike.{like}")
-    sel = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link")
-    if ors:
-        sel = sel.or_(",".join(ors))
-    # Reasonable cap
-    res = sel.limit(24).execute()
-    return res.data or []
-
-
-def build_structured_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    links = extract_links(row.get("answer") or "")
-    payload = {
-        "status": "success",
-        "flow": "travel_faq",
-        "data": {
-            "faq_id": row.get("id"),
-            "matched_question": row.get("question"),
-            "answer": row.get("answer"),
-            "is_dynamic": bool(row.get("dynamic")),
-            "links": links,
-        },
-    }
-    return payload
-
-
-def handle_travel_query(user_text: str, supabase, keyword_threshold: int = 1) -> Optional[Dict[str, Any]]:
-    import logging
-    logger = logging.getLogger("travel_flow")
-    logger.info(f"User query: {user_text}")
-    expanded_terms = expand_query_with_synonyms(user_text)
-    logger.info(f"Expanded query terms: {expanded_terms}")
-    # Pass 1: Filter FAQs by expanded keywords
-    all_faqs = supabase.table("travel_faq").select("id,category,question,answer,tags,last_updated,top10,dynamic,link").limit(100).execute().data or []
-    candidate_faqs = []
-    for row in all_faqs:
-        faq_text = (row.get("question") or "") + " " + (row.get("answer") or "")
-        if any(term in faq_text.lower() for term in expanded_terms):
-            candidate_faqs.append(row)
-    logger.info(f"Keyword candidate count: {len(candidate_faqs)}")
-    # Log candidate FAQ details and match scores
-    for idx, row in enumerate(candidate_faqs):
-        score = score_row(row, list(expanded_terms))
-        logger.info(f"Candidate {idx}: id={row.get('id')}, question={row.get('question')}, score={score}")
-    best = None
-    if candidate_faqs:
-        faq_questions = [row["question"] for row in candidate_faqs]
-        idx = fuzzy_match(user_text, faq_questions, threshold=65)
-        logger.info(f"Fuzzy match index: {idx}")
-        if idx is not None:
-            best = candidate_faqs[idx]
-            logger.info(f"Fuzzy matched question: {best.get('question')}")
-            logger.info(f"Fuzzy matched FAQ id: {best.get('id')}")
-        else:
-            logger.info("No fuzzy match found in candidates. Fallback to LLM triggered.")
-            return None
-    else:
-        logger.info("No candidates found after keyword/synonym filtering. Fallback to LLM triggered.")
+    except Exception as e:
+        logging.error(f"[TRAVEL_FLOW] Error calling Supabase RPC: {e}")
         return None
-    payload = build_structured_payload(best)
-    disclaimer = ""
-    if bool(best.get("dynamic")):
-        disclaimer = "\n\nNote: Live information can change — please verify with official sources."
-    return {
-        "response": (best.get("answer") or "").strip() + disclaimer,
-        "meta": {
-            "type": "travel_faq",
-            "travel": payload,
-        }
-    }
+
+    # --- Step 3: Check if any relevant documents were found ---
+    if not matching_faqs:
+        print("[TRAVEL_FLOW] No matches found above the threshold. Passing to next intent.")
+        return None  # No good match, so let the main router handle it.
+
+    # --- Step 4: Construct the prompt for the generation model ---
+    # We combine the retrieved FAQs to form a "context" for the LLM.
+    context = "\n".join([
+        f"FAQ Question: {faq['question']}\nFAQ Answer: {faq['answer']}" for faq in matching_faqs
+    ])
+
+    prompt = f"""
+    You are a helpful and friendly travel assistant for people travelling between Singapore and Johor Bahru (JB) for dental appointments.
+    Your personality is concise, clear, and reassuring.
+
+    Answer the user's question based ONLY on the context provided below.
+    If the context does not contain enough information to answer the question, just say: "I'm sorry, I don't have specific information about that. I can only answer questions about travel between Singapore and JB for dental appointments."
+    Do not make up any information that is not in the context.
+
+    --- CONTEXT ---
+    {context}
+    --- END OF CONTEXT ---
+
+    User's Question: {user_query}
+    """
+
+    # --- Step 5: Generate the final answer ---
+    try:
+        print("[TRAVEL_FLOW] Generating final answer with Gemini...")
+        final_answer = generation_model.generate_content(prompt)
+        print("[TRAVEL_FLOW] Final answer generated successfully.")
+        
+        # We return a dictionary in the format that main.py expects
+        return {"response": final_answer.text}
+
+    except Exception as e:
+        logging.error(f"[TRAVEL_FLOW] Error generating final answer: {e}")
+        return {"response": "I'm sorry, I encountered a technical issue while trying to answer your question. Please try again."}

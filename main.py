@@ -32,7 +32,7 @@ from services.session_service import add_conversation_message
 from flows.find_clinic_flow import handle_find_clinic
 from flows.booking_flow import handle_booking_flow
 from flows.qna_flow import handle_qna
-from flows.travel_flow import handle_travel_query, extract_keywords
+from flows.travel_flow import handle_travel_query
 from flows.outofscope_flow import handle_out_of_scope
 from flows.remember_flow import handle_remember_session
 
@@ -301,17 +301,19 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             intent = ChatIntent.CANCEL_BOOKING
     elif booking_context.get('status') == 'gathering_info':
         intent = ChatIntent.BOOK_APPOINTMENT
+    
+    # --- New Semantic Travel FAQ Routing ---
+    print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
 
-    # --- Travel FAQ routing: always run if travel keywords or fuzzy match detected ---
-    travel_keywords = extract_keywords(latest_user_message)
-    travel_resp = None
-    if travel_keywords:
-        print(f"[trace:{trace_id}] [INFO] Travel FAQ routing engaged (keywords/fuzzy match: {travel_keywords})")
-        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=1)
-    else:
-        # Try fuzzy match even if no keywords
-        travel_resp = handle_travel_query(latest_user_message, supabase, keyword_threshold=0)
+    # This new handle_travel_query will contain the full semantic search.
+    # It returns a response only if the match score is high enough.
+    travel_resp = handle_travel_query(
+        user_query=latest_user_message,
+        supabase_client=supabase
+    )
+
     if travel_resp:
+        print(f"[trace:{trace_id}] [INFO] Semantic Travel FAQ found a strong match. Returning response.")
         response_data = travel_resp
         updated_history = [msg.dict() for msg in query.history]
         updated_history.append({"role": "assistant", "content": response_data["response"]})
