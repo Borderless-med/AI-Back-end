@@ -14,7 +14,7 @@ gatekeeper_model = genai.GenerativeModel('models/gemini-2.5-pro')
 
 # BRAIN B: The "Fast" Workers (Speed & Cost Efficiency)
 # We use 2.5 Flash as it is the standard fast model in your environment.
-factual_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
+factual_brain_model = genai.GenerativeModel('models/gemini-2.5-pro')
 ranking_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
 generation_model = genai.GenerativeModel('models/gemini-2.5-flash') 
 
