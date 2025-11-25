@@ -1,10 +1,10 @@
 id,category,question,answer,tags,last_updated
-1,preparation,What documents do I need to cross?,Valid passport; if driving Singapore car into Malaysia also VEP registration + Touch 'n Go card.,passport|vep|touch_n_go|border_crossing|entry_requirements,11/21/2025
-2,preparation,How long should my passport be valid?,Keep 6+ months remaining to avoid questioning.,passport|validity|expiry_date|travel_documents,11/21/2025
-3,preparation,Do I need travel insurance for a dental visit?,Not required; basic travel/medical cover is smart for surprises.,insurance|dental|medical_cover|travel_insurance,11/21/2025
+1,preparation,What documents do I need to cross?,Valid passport; if driving Singapore car into Malaysia also VEP registration + Touch 'n Go card.,passport|vep|touch_n_go|border_crossing|entry_requirements|tng|vehicle_entry_permit|registration|car|driving|border|toll,11/21/2025
+2,preparation,How long should my passport be valid?,Keep 6+ months remaining to avoid questioning.,passport|validity|expiry_date|travel_documents|passport_validity|expiry|renewal|border|immigration,11/21/2025
+3,preparation,Do I need travel insurance for a dental visit?,Not required; basic travel/medical cover is smart for surprises.,insurance|dental|medical_cover|travel_insurance|coverage|policy|medical|clinic|emergency,11/21/2025
 4,preparation,Should I bring my old dental x-rays?,Yes—can avoid repeat imaging and save time.,xray|records|dental_history|previous_treatment,11/21/2025
 5,preparation,What appointment proof should I carry?,Digital confirmation (email/message) is fine.,appointment|proof|confirmation|booking_evidence,11/21/2025
-6,preparation,Do I need cash or are cards enough?,Carry both: clinics usually take cards; small purchases need MYR cash.,cash|card|payment_methods|currency|money,11/21/2025
+6,preparation,Do I need cash or are cards enough?,Carry both: clinics usually take cards; small purchases need MYR cash.,cash|card|payment_methods|currency|money|payment|digital_payment|clinic|sgd|myr|wallet|apps,11/21/2025
 7,preparation,Can I bring prescription meds across?,Yes in personal-use amounts; keep original packaging.,meds|personal_use|prescription_medication|border_rules,11/21/2025
 8,preparation,Do I need to declare dental items?,No—personal care items like whitening gel are fine.,whitening|declare|dental_products|customs_declaration,11/21/2025
 9,timing,When is the Causeway busiest?,Weekday AM (7–9:30 SG→JB) and PM (5–8 JB→SG); early weekend mornings too.,causeway|peak|traffic_jam|busy_times|border_crossing,11/21/2025
@@ -32,10 +32,10 @@ id,category,question,answer,tags,last_updated
 31,costs,Bus cost each way?,Usually low single digits (a few SGD or RM); fares can adjust—confirm at ticket counter or operator site.,bus|cost|dynamic|fare|price|public_transport,11/21/2025
 32,costs,Taxi/Grab Singapore → JB clinic cost?,Commonly SGD 40–70 off‑peak; can exceed this with surge or heavy jams—always check the live estimate in the Grab app first.,taxi|grab|cost|dynamic|fare|price|clinic,11/21/2025
 33,costs,Taxi vs bus cost gap?,Taxi often 10–20× bus price (time vs money trade); multiplier varies with surge—compare live Grab fare against posted bus fare.,comparison|cost|dynamic|taxi|bus|price|fare,11/21/2025
-34,costs,Should I pay for treatment in SGD or MYR?,Clinics charge in MYR; pay in MYR or card.,payment|currency|top10|clinic|myr|sgd|card,11/21/2025
-35,costs,Do clinics accept cards?,Most do; verify for small practices.,card|acceptance|payment|clinic|credit_card,11/21/2025
+34,costs,Should I pay for treatment in SGD or MYR?,Clinics charge in MYR; pay in MYR or card.,payment|currency|top10|clinic|myr|sgd|card|digital_payment|cash|payment_methods|wallet|apps,11/21/2025
+35,costs,Do clinics accept cards?,Most do; verify for small practices.,card|acceptance|payment|clinic|credit_card|digital_payment|cash|payment_methods|sgd|myr|wallet|apps,11/21/2025
 36,costs,Do I need to tip?,No tipping norm for dental visits.,tipping|dental|payment|clinic|tips,11/21/2025
-37,driving,Do I need VEP for a Singapore car?,Yes—register before entering Malaysia via JPJ VEP portal: https://vep.jpj.gov.my/ (process or rules can update—verify before travel).,vep|requirement|link|dynamic|car|jpj|registration,11/21/2025
+37,driving,Do I need VEP for a Singapore car?,Yes—register before entering Malaysia via JPJ VEP portal: https://vep.jpj.gov.my/ (process or rules can update—verify before travel).,vep|requirement|link|dynamic|car|jpj|registration|vehicle_entry_permit|register_vep|driving|border|immigration,11/21/2025
 38,driving,How do I top up Touch ’n Go?,Kiosks, petrol stations  |  convenience stores |  some mall machines; options evolve—refer to official info or app: https://www.touchngo.com.my/.|,11/21/2025
 39,driving,How much Touch ’n Go balance to carry?,RM30–50 covers tolls + buffer.,touch_n_go|balance|payment|toll|card,11/21/2025
 40,driving,Where can I park near clinics?,Street or plaza parking—check signage.,parking|clinic|location|car|directions,11/21/2025
@@ -89,10 +89,10 @@ id,category,question,answer,tags,last_updated
 88,transport,What is the fastest way to get to JB?,Taxi/Grab is fastest but more expensive; bus is cheaper but slower. MRT/bus to Woodlands/Kranji then cross-border bus is common.,fastest|mode|public_transport|taxi|bus|mrt|route|speed|directions|singapore|jb,11/21/2025
 89,transport,Which public transport is best for JB?,"Cross-border buses (160, 170 , 950,  CW) are reliable; Shuttle Tebrau train is quick if tickets are available. MRT to Woodlands/Kranji then bus is common.",public_transport|bus|train|mrt|best|route|directions|singapore|jb|ciq,11/21/2025
 90,clinic_travel,How do I get from Johor CIQ to my clinic?,Most clinics are 10–25 minutes by taxi/Grab from CIQ. Some are walkable; check your clinic’s address and use navigation apps.,ciq|clinic_access|taxi|grab|walk|distance|route|directions|clinic|navigation,11/21/2025
-91,clinic_travel,How do I get from CIQ to Mount Austin?,Taxi/Grab is easiest; expect 20–30 minutes off-peak. Buses are available but less direct.,ciq|mount_austin|taxi|grab|bus|route|clinic_access|directions|clinic|navigation,11/21/2025
+91,clinic_travel,How do I get from CIQ to Mount Austin?,Taxi/Grab is easiest; expect 20–30 minutes off-peak. Buses are available but less direct.,ciq|mount_austin|taxi|grab|bus|route|clinic_access|directions|clinic|navigation|safety|walk|distance,11/21/2025
 92,clinic_travel,How do I get from CIQ to Bukit Indah?,Taxi/Grab is fastest; bus options exist but may require transfers. Plan for 20–30 minutes off-peak.,ciq|bukit_indah|taxi|grab|bus|route|clinic_access|directions|clinic|navigation,11/21/2025
 93,clinic_travel,How do I get from CIQ to Molek or Skudai?,Taxi/Grab is recommended; bus routes are available but less direct. Travel time 20–40 minutes off-peak.,ciq|molek|skudai|taxi|grab|bus|route|clinic_access|directions|clinic|navigation,11/21/2025
-94,clinic_travel,How do I get from CIQ to City Square?,City Square Mall is directly across from CIQ; walkable in 5 minutes.,ciq|city_square|walk|distance|route|clinic_access|directions|clinic|navigation,11/21/2025
+94,clinic_travel,How do I get from CIQ to City Square?,City Square Mall is directly across from CIQ; walkable in 5 minutes.,ciq|city_square|walk|distance|route|clinic_access|directions|clinic|navigation|safety|mall|jb_town,11/21/2025
 95,transport,How do I get from Singapore to JB by public transport?,"MRT to Woodlands/Kranji then cross-border bus (160, 170,950,  CW) to Johor CIQ. Follow signs for immigration and onward travel.",public_transport|bus|mrt|route|singapore|jb|ciq|directions|clinic|navigation,11/21/2025
 96,timing,What day of the week is best for travel to JB?,Weekdays (Tuesday–Thursday) are usually less crowded than weekends. Avoid Friday evenings and Sunday late afternoons for return.,weekday|weekend|best_day|timing|crowd|avoid|top10|travel_time|traffic|singapore|jb,11/21/2025
 97,clinic_travel,How do I get from CIQ to any township or clinic in JB?,Most townships and clinics in JB are accessible by taxi/Grab from CIQ. Travel times range from 10 to 45 minutes depending on distance and traffic. For rare or less-known areas  check your clinic’s address and use navigation apps for the best route.,ciq|township|clinic_access|taxi|grab|navigation|route|distance|generic|directions|clinic,11/21/2025

@@ -1,29 +1,33 @@
-# File: src/services/gemini_service.py (The FINAL version)
+# File: src/services/gemini_service.py
 
 import os
 import google.generativeai as genai
 
-# This configures the client ONCE for your entire application
-# Make sure GEMINI_API_KEY is set in your .env file
+# 1. Configure the client
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# --- Define ALL AI Models in one place ---
+# --- Define ALL AI Models (Based on your available list) ---
 
-# Use a powerful model for the critical Gatekeeper task
-gatekeeper_model = genai.GenerativeModel('models/gemini-pro-latest')
+# BRAIN A: The "Smart" Gatekeeper (High Reasoning)
+# We use 2.5 Pro because it is the most capable model in your list for logic.
+gatekeeper_model = genai.GenerativeModel('models/gemini-2.5-pro')
 
-# Use a fast model for subsequent, simpler tasks
+# BRAIN B: The "Fast" Workers (Speed & Cost Efficiency)
+# We use 2.5 Flash as it is the standard fast model in your environment.
 factual_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
 ranking_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
-generation_model = genai.GenerativeModel('models/gemini-2.5-flash') # For Q&A and other text generation
+generation_model = genai.GenerativeModel('models/gemini-2.5-flash') 
 
-# The embedding model is just a string name, not a full model object
-embedding_model_name = 'models/embedding-001'
+# BRAIN C: The "Eyes" (Embeddings)
+# We use text-embedding-004 (768 dimensions) as per your Semantic RAG upgrade.
+embedding_model_name = 'models/text-embedding-004'
 
-# We can also add the models for your other flows here for consistency
+# --- Auxiliary Models (mapped to the Fast Brain) ---
 booking_model = genai.GenerativeModel('models/gemini-2.5-flash')
 outofscope_model = genai.GenerativeModel('models/gemini-2.5-flash')
 remember_model = genai.GenerativeModel('models/gemini-2.5-flash')
-qna_model = generation_model # The Q&A model is the same as the general generation model
 
-print("✅ Centralized Gemini Service Initialized Successfully")
+# QnA uses the general generation model
+qna_model = generation_model 
+
+print("✅ Centralized Gemini Service Initialized Successfully (Models: 2.5-Pro / 2.5-Flash / Text-004)")

@@ -20,7 +20,7 @@ if not genai.get_model(EMBEDDING_MODEL_NAME):
 
 # This is the generation model that will answer the question based on the context.
 # We can use a powerful model like Gemini 1.5 Pro or Flash.
-generation_model = genai.GenerativeModel('gemini-1.5-flash')
+generation_model = genai.GenerativeModel('models/gemini-2.5-flash')
 
 def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None:
     """
