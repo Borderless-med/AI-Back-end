@@ -11,7 +11,7 @@ supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
-embedding_model = 'models/gemini-embedding-001'
+embedding_model = 'models/text-embedding-004'
 
 # --- Define the sentiment columns ---
 SENTIMENT_MAPPING = {
@@ -71,8 +71,7 @@ def rebuild_all_embeddings():
                 model=embedding_model,
                 content=content_to_embed,
                 task_type="RETRIEVAL_DOCUMENT",
-                title=clinic_name,
-                output_dimensionality=768
+                title=clinic_name
             )
             new_embedding = embedding_response['embedding']
         except Exception as e:

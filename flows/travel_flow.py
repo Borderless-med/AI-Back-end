@@ -12,15 +12,13 @@ EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 
 # Configure the Gemini client (it should inherit the configuration from main.py,
 # but explicit configuration is safer if this file is ever run standalone).
-if not genai.get_model(EMBEDDING_MODEL_NAME):
-    gemini_api_key = os.getenv("Gemini_API_Key")
-    if not gemini_api_key:
-        raise ValueError("Gemini_API_Key not found in .env file for travel_flow")
-    genai.configure(api_key=gemini_api_key)
+# Configure the Gemini client using the standard env var; rely on central config when imported
+if not os.getenv("GEMINI_API_KEY"):
+    logging.warning("GEMINI_API_KEY not found in environment; ensure central configuration is set before invoking travel_flow.")
 
 # This is the generation model that will answer the question based on the context.
-# We can use a powerful model like Gemini 1.5 Pro or Flash.
-generation_model = genai.GenerativeModel('models/gemini-2.5-flash')
+# We can use Gemini 2.5 Pro for consistent behavior across the app.
+generation_model = genai.GenerativeModel('models/gemini-2.5-pro')
 
 def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None:
     """
@@ -101,9 +99,28 @@ def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None
         final_answer = generation_model.generate_content(prompt)
         print("[TRAVEL_FLOW] Final answer generated successfully.")
         
+        # Build travel meta payload for tests and UI
+        def extract_urls(text: str):
+            import re
+            pattern = r"https?://[^\s)]+"
+            return re.findall(pattern, text or "")
+
+        top = matching_faqs[0] if matching_faqs else {}
+        answer_text = final_answer.text or ""
+        links = list({url for url in (extract_urls("\n".join([faq.get('answer','') for faq in matching_faqs])) + extract_urls(answer_text))})
+        travel_meta = {
+            "status": "success",
+            "flow": "travel_faq",
+            "data": {
+                "matched_question": top.get("question"),
+                "answer": top.get("answer"),
+                "links": [{"url": u} for u in links]
+            }
+        }
+
         # We return a dictionary in the format that main.py expects
-        return {"response": final_answer.text}
+        return {"response": answer_text, "meta": {"type": "travel_faq", "travel": travel_meta}}
 
     except Exception as e:
         logging.error(f"[TRAVEL_FLOW] Error generating final answer: {e}")
-        return {"response": "I'm sorry, I encountered a technical issue while trying to answer your question. Please try again."}
+        return {"response": "I'm sorry, I encountered a technical issue while trying to answer your question. Please try again.", "meta": {"type": "travel_faq", "travel": {"status": "error", "flow": "travel_faq", "data": {}}}}

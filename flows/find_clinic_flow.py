@@ -290,8 +290,8 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         best_tokens = sum(1 for t in distinct_tokens if t in best.get('name', '').lower())
         best_meaningful = sum(1 for t in meaningful_tokens if t in best.get('name', '').lower())
         best_sim = SequenceMatcher(None, name_fragment, best.get('name', '').lower()).ratio()
-        # Require at least one meaningful token hit OR strong similarity (>= 0.80)
-        if best_meaningful < 1 and best_sim < 0.80:
+        # Require high confidence: at least one meaningful token AND strong similarity (>= 0.88)
+        if best_meaningful < 1 or best_sim < 0.88:
             print(f"[DirectLookup] Fuzzy match below threshold (tokens={best_tokens}, sim={best_sim:.2f}); aborting direct lookup.")
             return None
         clinic = best
@@ -315,13 +315,24 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         state_update_local = {}
         if loc_pref:
             state_update_local = {"location_preference": loc_pref, "awaiting_location": False}
-        print(f"[DirectLookup] Clinic matched: {clinic_clean.get('name')} ({clinic_clean.get('country')}) with score {score(best):.2f}")
+        print(f"[DirectLookup] Clinic matched: {clinic_clean.get('name')} ({clinic_clean.get('country')}) with sim={best_sim:.2f} meaningful_hits={best_meaningful}")
+        # Only lock session to a single clinic when confidence is very high
+        if best_sim >= 0.92 and best_meaningful >= 2:
+            return {
+                "response": response_text,
+                "applied_filters": {"direct_clinic": clinic_clean.get('name'), "country": clinic_clean.get('country')},
+                "candidate_pool": [clinic_clean],
+                "booking_context": {},
+                "meta": {"type": "clinic_detail"},
+                "state_update": state_update_local
+            }
+        # Otherwise, present details but do not collapse candidate pool or set direct_clinic
         return {
             "response": response_text,
-            "applied_filters": {"direct_clinic": clinic_clean.get('name'), "country": clinic_clean.get('country')},
-            "candidate_pool": [clinic_clean],
+            "applied_filters": {},
+            "candidate_pool": [],
             "booking_context": {},
-            "meta": {"type": "clinic_detail"},
+            "meta": {"type": "clinic_detail_soft"},
             "state_update": state_update_local
         }
 

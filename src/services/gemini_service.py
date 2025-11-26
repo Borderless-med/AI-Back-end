@@ -9,13 +9,13 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 # --- Define ALL AI Models (Based on your available list) ---
 
 # BRAIN A: The "Smart" Gatekeeper (High Reasoning)
-# We use 2.5 Pro because it is the most capable model in your list for logic.
+# Use 2.5 Pro for complex logic and routing.
 gatekeeper_model = genai.GenerativeModel('models/gemini-2.5-pro')
 
-# BRAIN B: The "Fast" Workers (Speed & Cost Efficiency)
-# We use 2.5 Flash as it is the standard fast model in your environment.
+# BRAIN B: The "Fast/Accurate" Workers
+# Use 2.5 Pro for factual extraction and ranking; 2.5 Flash for final text generation.
 factual_brain_model = genai.GenerativeModel('models/gemini-2.5-pro')
-ranking_brain_model = genai.GenerativeModel('models/gemini-2.5-flash')
+ranking_brain_model = genai.GenerativeModel('models/gemini-2.5-pro')
 generation_model = genai.GenerativeModel('models/gemini-2.5-flash') 
 
 # BRAIN C: The "Eyes" (Embeddings)
@@ -30,4 +30,4 @@ remember_model = genai.GenerativeModel('models/gemini-2.5-flash')
 # QnA uses the general generation model
 qna_model = generation_model 
 
-print("✅ Centralized Gemini Service Initialized Successfully (Models: 2.5-Pro / 2.5-Flash / Text-004)")
+print("✅ Gemini Service: 2.5-Pro (logic) / 2.5-Flash (chat) / text-embedding-004 (embeddings)")

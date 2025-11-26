@@ -250,6 +250,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     # --- 4. ROUTING LOGIC (RE-ORDERED) ---
     intent = None
+    gatekeeper_decision = None
 
     # A. Check if currently booking (Priority #1)
     if booking_context.get('status') == 'confirming_details':
@@ -261,20 +262,42 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     elif booking_context.get('status') == 'gathering_info':
         intent = ChatIntent.BOOK_APPOINTMENT
     
-    # B. Intent Heuristics (Priority #2 - MOVED UP)
-    # Check for specific dental keywords FIRST. This prevents Travel RAG from hijacking "Scaling in JB".
+    # B. Gatekeeper (Priority #2 - FIRST decision-maker)
+    if intent is None:
+        try:
+            gate_prompt = f"""
+            You are an intent gatekeeper. Classify the user's latest message into one of:
+            FIND_CLINIC, BOOK_APPOINTMENT, CANCEL_BOOKING, GENERAL_DENTAL_QUESTION, REMEMBER_SESSION, TRAVEL_FAQ, OUT_OF_SCOPE.
+            Return JSON: {{"intent": "...", "confidence": 0.0}}
+            History:
+            {query.history}
+            Latest: "{latest_user_message}"
+            """
+            resp = gatekeeper_model.generate_content(gate_prompt)
+            text = (resp.text or "").strip()
+            import json as _json
+            parsed = _json.loads(text) if text.startswith("{") else {}
+            gate_intent = parsed.get("intent")
+            gate_conf = float(parsed.get("confidence", 0))
+            gatekeeper_decision = {"intent": gate_intent, "confidence": gate_conf}
+            print(f"[trace:{trace_id}] [Gatekeeper] intent={gate_intent} conf={gate_conf:.2f}")
+            # Accept gatekeeper decision only if high confidence
+            if gate_intent in [i.value for i in ChatIntent] and gate_conf >= 0.7:
+                intent = ChatIntent(gate_intent)
+        except Exception as e:
+            print(f"[trace:{trace_id}] [Gatekeeper] error: {e}")
+
+    # C. Intent Heuristics (Safety Net only if gatekeeper low confidence)
     if intent is None:
         search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "nearby", "best"]
         service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
-        
         has_search = any(k in lower_msg for k in search_triggers)
         has_service = any(k in lower_msg for k in service_triggers)
-        
         if has_search or has_service:
             print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
             intent = ChatIntent.FIND_CLINIC
 
-    # C. Semantic Travel FAQ Check (Priority #3 - MOVED DOWN)
+    # D. Semantic Travel FAQ Check
     # Only run this if it's NOT a clear dental question
     if intent is None:
         print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
@@ -287,7 +310,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             print(f"[trace:{trace_id}] [INFO] Semantic Travel FAQ found a strong match. Returning response.")
             response_data = travel_resp
             # --- Standard Response Saving ---
-            updated_history = [msg.dict() for msg in query.history]
+            updated_history = [msg.model_dump() for msg in query.history]
             updated_history.append({"role": "assistant", "content": response_data["response"]})
             try:
                 add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
@@ -297,7 +320,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             response_data["session_id"] = session_id
             return response_data
 
-    # D. Fallback Intent
+    # E. Fallback Intent
     if intent is None:
         intent = ChatIntent.GENERAL_DENTAL_QUESTION
 
@@ -316,7 +339,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 "meta": {"type": "location_prompt", "options": [{"key": "jb", "label": "JB"}, {"key": "sg", "label": "SG"}, {"key": "both", "label": "Both"}]},
                 "applied_filters": {}, "candidate_pool": [], "booking_context": {}
             }
-            updated_history = [msg.dict() for msg in query.history]
+            updated_history = [msg.model_dump() for msg in query.history]
             updated_history.append({"role": "assistant", "content": response_data["response"]})
             update_session(session_id, secure_user_id, state, updated_history)
             response_data["session_id"] = session_id
@@ -340,7 +363,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                     "meta": {"type": "location_prompt", "options": [{"key": "jb", "label": "JB"}, {"key": "sg", "label": "SG"}, {"key": "both", "label": "Both"}]},
                     "applied_filters": {}, "candidate_pool": [], "booking_context": {}
                  }
-                 updated_history = [msg.dict() for msg in query.history]
+                 updated_history = [msg.model_dump() for msg in query.history]
                  updated_history.append({"role": "assistant", "content": response_data["response"]})
                  update_session(session_id, secure_user_id, state, updated_history)
                  response_data["session_id"] = session_id
@@ -405,7 +428,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     if state.get("hard_reset_active"):
         new_state["hard_reset_active"] = False
 
-    updated_history = [msg.dict() for msg in query.history]
+    updated_history = [msg.model_dump() for msg in query.history]
     if response_data.get("response"):
         updated_history.append({"role": "assistant", "content": response_data["response"]})
         try:
