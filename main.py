@@ -345,6 +345,23 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 update_session(session_id, secure_user_id, state, updated_history)
                 response_data["session_id"] = session_id
                 return response_data
+            else:
+                # Pattern matched but couldn't resolve - return first clinic as fallback
+                print(f"[trace:{trace_id}] [ORDINAL] Pattern matched but resolve failed - returning first clinic.")
+                first_clinic = candidate_clinics[0]
+                state["selected_clinic_id"] = first_clinic.get("id")
+                response_data = {
+                    "response": f"**{first_clinic.get('name')}**\n\nAddress: {first_clinic.get('address')}\nRating: {first_clinic.get('rating')} ({first_clinic.get('reviews')} reviews)\nHours: {first_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
+                    "applied_filters": previous_filters,
+                    "candidate_pool": candidate_clinics,
+                    "booking_context": booking_context,
+                    "meta": {"type": "clinic_detail", "clinic": first_clinic}
+                }
+                updated_history = [msg.model_dump() for msg in query.history]
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                update_session(session_id, secure_user_id, state, updated_history)
+                response_data["session_id"] = session_id
+                return response_data
 
     # B. Check for booking intent (Priority #2)
     if detect_booking_intent(latest_user_message, candidate_clinics):
