@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from supabase import create_client, Client
 import os
 import logging
+import re
 from dotenv import load_dotenv
 from uuid import uuid4
 from enum import Enum
@@ -312,22 +313,38 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     gatekeeper_decision = None
 
     # A. Check for ordinal references to existing clinics (Priority #1)
-    ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
-    if ordinal_clinic:
-        state["selected_clinic_id"] = ordinal_clinic.get("id")
-        print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
-        response_data = {
-            "response": f"**{ordinal_clinic.get('name')}**\n\nAddress: {ordinal_clinic.get('address')}\nRating: {ordinal_clinic.get('rating')} ({ordinal_clinic.get('reviews')} reviews)\nHours: {ordinal_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
-            "applied_filters": previous_filters,
-            "candidate_pool": candidate_clinics,
-            "booking_context": booking_context,
-            "meta": {"type": "clinic_detail", "clinic": ordinal_clinic}
-        }
-        updated_history = [msg.model_dump() for msg in query.history]
-        updated_history.append({"role": "assistant", "content": response_data["response"]})
-        update_session(session_id, secure_user_id, state, updated_history)
-        response_data["session_id"] = session_id
-        return response_data
+    ordinal_pattern = r'\b(first|second|third|1st|2nd|3rd|#1|#2|#3)\b.*(clinic|one|option|list)'
+    if re.search(ordinal_pattern, lower_msg, re.IGNORECASE):
+        if not candidate_clinics:
+            print(f"[trace:{trace_id}] [ORDINAL] Pattern detected but no candidates available.")
+            state["awaiting_location"] = True
+            response_data = {
+                "response": "I don't have a clinic list ready right now. Let me help you search — which country would you like to explore?",
+                "applied_filters": {}, "candidate_pool": [], "booking_context": {},
+                "meta": {"type": "location_prompt", "options": [{"key": "jb", "label": "JB"}, {"key": "sg", "label": "SG"}, {"key": "both", "label": "Both"}]}
+            }
+            updated_history = [msg.model_dump() for msg in query.history]
+            updated_history.append({"role": "assistant", "content": response_data["response"]})
+            update_session(session_id, secure_user_id, state, updated_history)
+            response_data["session_id"] = session_id
+            return response_data
+        else:
+            ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
+            if ordinal_clinic:
+                state["selected_clinic_id"] = ordinal_clinic.get("id")
+                print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
+                response_data = {
+                    "response": f"**{ordinal_clinic.get('name')}**\n\nAddress: {ordinal_clinic.get('address')}\nRating: {ordinal_clinic.get('rating')} ({ordinal_clinic.get('reviews')} reviews)\nHours: {ordinal_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
+                    "applied_filters": previous_filters,
+                    "candidate_pool": candidate_clinics,
+                    "booking_context": booking_context,
+                    "meta": {"type": "clinic_detail", "clinic": ordinal_clinic}
+                }
+                updated_history = [msg.model_dump() for msg in query.history]
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                update_session(session_id, secure_user_id, state, updated_history)
+                response_data["session_id"] = session_id
+                return response_data
 
     # B. Check for booking intent (Priority #2)
     if detect_booking_intent(latest_user_message, candidate_clinics):
@@ -380,8 +397,12 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         ]
         if any(k in lower_msg for k in travel_keywords):
             intent = ChatIntent.TRAVEL_FAQ
-        # 2) QnA shortcut: classic question patterns
-        elif any(lower_msg.startswith(p) for p in ["what is", "what are", "is it", "does", "how often", "how long", "why", "when", "can i", "should i"]):
+        # 2) QnA shortcut: educational questions take PRIORITY over service matching
+        elif any(lower_msg.startswith(p) or f" {p}" in lower_msg for p in [
+            "what is", "what are", "tell me about", "tell me more", "explain",
+            "how does", "why is", "is it", "does", "should i", "can i",
+            "how often", "how long", "when should", "how do you", "how do i"
+        ]):
             intent = ChatIntent.GENERAL_DENTAL_QUESTION
         # 3) Dental find clinic heuristics
         else:
@@ -517,6 +538,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     if final_booking_context.get("status") == "complete":
         new_state = {
+            **state,  # Start with existing state to preserve all keys
             "applied_filters": previous_filters,
             "candidate_pool": candidate_clinics,
             "booking_context": {},
@@ -524,6 +546,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         }
     else:
         new_state = {
+            **state,  # Start with existing state to preserve all keys
             "applied_filters": response_data.get("applied_filters", previous_filters),
             "candidate_pool": response_data.get("candidate_pool", candidate_clinics),
             "booking_context": final_booking_context,

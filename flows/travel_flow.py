@@ -103,6 +103,12 @@ def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None
     Your personality is concise, clear, and reassuring.
 
     Answer the user's question based ONLY on the context provided below.
+    
+    **SPECIAL INSTRUCTIONS:**
+    - If the question mentions "the first clinic", "first on the list", "first one", or a specific clinic NAME, interpret it as asking for GENERAL travel directions from Singapore to Johor Bahru.
+    - Provide the most relevant travel information from the context (e.g., bus routes, checkpoint procedures, general directions to JB).
+    - Do NOT say you lack information if the context contains general SG-to-JB travel guidance that answers the travel intent.
+    
     If the context does not contain enough information to answer the question, just say: "I'm sorry, I don't have specific information about that. I can only answer questions about travel between Singapore and JB for dental appointments."
     Do not make up any information that is not in the context.
 
