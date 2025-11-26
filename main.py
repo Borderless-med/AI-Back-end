@@ -116,6 +116,46 @@ def normalize_location_terms(text: str) -> str | None:
         if key in t: return country
     return None
 
+def resolve_ordinal_reference(message: str, candidate_pool: list) -> dict | None:
+    """Resolve ordinal references like 'first clinic', 'second', '1st', etc."""
+    import re
+    if not candidate_pool:
+        return None
+    msg_lower = message.lower().strip()
+    # Pattern: optional prefix + ordinal
+    pattern = r'^(?:show|select|open|details?\s+(?:of|for)|tell me about|info on|remember)?\s*(first|second|third|1st|2nd|3rd|top|#?1|#?2|#?3)\s*(?:clinic|one|option)?'
+    match = re.search(pattern, msg_lower)
+    if not match:
+        return None
+    ordinal = match.group(1)
+    ordinal_map = {
+        'first': 0, '1st': 0, '1': 0, '#1': 0, 'top': 0,
+        'second': 1, '2nd': 1, '2': 1, '#2': 1,
+        'third': 2, '3rd': 2, '3': 2, '#3': 2
+    }
+    idx = ordinal_map.get(ordinal)
+    if idx is not None and idx < len(candidate_pool):
+        return candidate_pool[idx]
+    return None
+
+def detect_booking_intent(message: str, candidate_pool: list) -> bool:
+    """Detect if message contains booking signals + clinic reference."""
+    msg_lower = message.lower()
+    booking_verbs = ['book', 'schedule', 'appointment', 'reserve', 'arrange', 'set up']
+    has_booking_verb = any(verb in msg_lower for verb in booking_verbs)
+    if not has_booking_verb:
+        return False
+    # Check if clinic name or ordinal reference present
+    if candidate_pool and any(c.get('name','').lower() in msg_lower for c in candidate_pool):
+        return True
+    # Check ordinal patterns
+    if resolve_ordinal_reference(message, candidate_pool):
+        return True
+    # Check generic service + booking combo
+    service_words = ['scaling', 'cleaning', 'root canal', 'implant', 'whitening', 'crown', 'filling', 'braces', 'wisdom']
+    has_service = any(s in msg_lower for s in service_words)
+    return has_booking_verb and has_service
+
 # Auth Helpers
 def get_user_id_from_jwt(request: Request):
     if request.method == "OPTIONS": return
@@ -248,21 +288,64 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         response_data["session_id"] = session_id
         return response_data
 
-    # --- 4. ROUTING LOGIC (RE-ORDERED) ---
+    # 4. GLOBAL LOCATION PREPROCESSING
+    # If awaiting location and user sends a pure location term, capture it before routing
+    if state.get("awaiting_location"):
+        inferred_location = normalize_location_terms(latest_user_message)
+        if inferred_location:
+            state["location_preference"] = inferred_location
+            state.pop("awaiting_location", None)
+            print(f"[trace:{trace_id}] [LOCATION] Captured: {inferred_location}")
+            # Trigger a find clinic prompt to continue the flow
+            response_data = {
+                "response": f"Great! I'll search for clinics in {inferred_location.upper()}. What service are you looking for? (e.g., scaling, root canal, braces)",
+                "applied_filters": {}, "candidate_pool": [], "booking_context": {}
+            }
+            updated_history = [msg.model_dump() for msg in query.history]
+            updated_history.append({"role": "assistant", "content": response_data["response"]})
+            update_session(session_id, secure_user_id, state, updated_history)
+            response_data["session_id"] = session_id
+            return response_data
+
+    # --- 5. ROUTING LOGIC (RE-ORDERED WITH ENHANCEMENTS) ---
     intent = None
     gatekeeper_decision = None
 
-    # A. Check if currently booking (Priority #1)
-    if booking_context.get('status') == 'confirming_details':
-        user_reply = latest_user_message.strip().lower()
-        if any(x in user_reply for x in ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed']):
-            intent = ChatIntent.BOOK_APPOINTMENT
-        elif any(x in user_reply for x in ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic']):
-            intent = ChatIntent.CANCEL_BOOKING
-    elif booking_context.get('status') == 'gathering_info':
+    # A. Check for ordinal references to existing clinics (Priority #1)
+    ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
+    if ordinal_clinic:
+        state["selected_clinic_id"] = ordinal_clinic.get("id")
+        print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
+        response_data = {
+            "response": f"**{ordinal_clinic.get('name')}**\n\nAddress: {ordinal_clinic.get('address')}\nRating: {ordinal_clinic.get('rating')} ({ordinal_clinic.get('reviews')} reviews)\nHours: {ordinal_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
+            "applied_filters": previous_filters,
+            "candidate_pool": candidate_clinics,
+            "booking_context": booking_context,
+            "meta": {"type": "clinic_detail", "clinic": ordinal_clinic}
+        }
+        updated_history = [msg.model_dump() for msg in query.history]
+        updated_history.append({"role": "assistant", "content": response_data["response"]})
+        update_session(session_id, secure_user_id, state, updated_history)
+        response_data["session_id"] = session_id
+        return response_data
+
+    # B. Check for booking intent (Priority #2)
+    if detect_booking_intent(latest_user_message, candidate_clinics):
         intent = ChatIntent.BOOK_APPOINTMENT
+        print(f"[trace:{trace_id}] [BOOKING] Detected booking intent via signals.")
+
+    # C. Check if currently booking (Priority #3)
+    if intent is None:
+        if booking_context.get('status') == 'confirming_details':
+            user_reply = latest_user_message.strip().lower()
+            if any(x in user_reply for x in ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed']):
+                intent = ChatIntent.BOOK_APPOINTMENT
+            elif any(x in user_reply for x in ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic']):
+                intent = ChatIntent.CANCEL_BOOKING
+        elif booking_context.get('status') == 'gathering_info':
+            intent = ChatIntent.BOOK_APPOINTMENT
     
-    # B. Gatekeeper (Priority #2 - FIRST decision-maker)
+    # D. Gatekeeper (Priority #4 - decision-maker when not clear from heuristics)
     if intent is None:
         try:
             gate_prompt = f"""
@@ -287,32 +370,30 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         except Exception as e:
             print(f"[trace:{trace_id}] [Gatekeeper] error: {e}")
 
-    # C. Intent Heuristics (Safety Net only if gatekeeper low confidence)
+    # E. Intent Heuristics (Safety Net)
     if intent is None:
-        # 1) QnA shortcut: classic question patterns
-        qna_triggers_starts = ["what is", "what are", "is it", "does", "how often", "how long", "why", "when", "can i", "should i"]
-        if any(lower_msg.startswith(p) for p in qna_triggers_starts):
+        # 1) Travel override: clear travel phrasing (before QnA)
+        travel_keywords = [
+            "how to get", "get to", "directions", "route", "from singapore", "from sg",
+            "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
+            "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw"
+        ]
+        if any(k in lower_msg for k in travel_keywords):
+            intent = ChatIntent.TRAVEL_FAQ
+        # 2) QnA shortcut: classic question patterns
+        elif any(lower_msg.startswith(p) for p in ["what is", "what are", "is it", "does", "how often", "how long", "why", "when", "can i", "should i"]):
             intent = ChatIntent.GENERAL_DENTAL_QUESTION
+        # 3) Dental find clinic heuristics
         else:
-            # 2) Travel override: clear travel phrasing
-            travel_keywords = [
-                "how to get", "get to", "directions", "route", "from singapore", "from sg",
-                "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
-                "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw"
-            ]
-            if any(k in lower_msg for k in travel_keywords):
-                intent = ChatIntent.TRAVEL_FAQ
-            else:
-                # 3) Dental find clinic heuristics
-                search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "nearby", "best"]
-                service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
-                has_search = any(k in lower_msg for k in search_triggers)
-                has_service = any(k in lower_msg for k in service_triggers)
-                if has_search or has_service:
-                    print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
-                    intent = ChatIntent.FIND_CLINIC
+            search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "appointment", "nearby", "best"]
+            service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
+            has_search = any(k in lower_msg for k in search_triggers)
+            has_service = any(k in lower_msg for k in service_triggers)
+            if has_search or has_service:
+                print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
+                intent = ChatIntent.FIND_CLINIC
 
-    # D. Semantic Travel FAQ Check
+    # F. Semantic Travel FAQ Check
     # Run if explicitly routed to TRAVEL_FAQ or if still no intent
     if intent == ChatIntent.TRAVEL_FAQ or intent is None:
         print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
@@ -324,6 +405,10 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         if travel_resp:
             print(f"[trace:{trace_id}] [INFO] Semantic Travel FAQ found a strong match. Returning response.")
             response_data = travel_resp
+            # Preserve candidate pool and filters
+            response_data["applied_filters"] = response_data.get("applied_filters", previous_filters)
+            response_data["candidate_pool"] = response_data.get("candidate_pool", candidate_clinics)
+            response_data["booking_context"] = response_data.get("booking_context", booking_context)
             # --- Standard Response Saving ---
             updated_history = [msg.model_dump() for msg in query.history]
             updated_history.append({"role": "assistant", "content": response_data["response"]})
@@ -335,7 +420,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             response_data["session_id"] = session_id
             return response_data
 
-    # E. Fallback Intent
+    # G. Fallback Intent
     if intent is None:
         intent = ChatIntent.GENERAL_DENTAL_QUESTION
 
@@ -411,6 +496,10 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     elif intent == ChatIntent.GENERAL_DENTAL_QUESTION:
         response_data = handle_qna(latest_user_message, generation_model)
+        # Preserve candidate pool and filters through QnA
+        response_data["applied_filters"] = response_data.get("applied_filters", previous_filters)
+        response_data["candidate_pool"] = response_data.get("candidate_pool", candidate_clinics)
+        response_data["booking_context"] = response_data.get("booking_context", booking_context)
 
     elif intent == ChatIntent.REMEMBER_SESSION:
         response_data = handle_remember_session(session, latest_user_message)
