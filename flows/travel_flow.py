@@ -33,6 +33,26 @@ def handle_travel_query(user_query: str, supabase_client: Client) -> dict | None
     """
     print(f"[TRAVEL_FLOW] Received query: '{user_query}'")
 
+    # Quick guard: avoid triggering travel flow on trivial/non-travel inputs
+    q = (user_query or "").strip().lower()
+    if not q:
+        return None
+    # Single-word country or very short inputs should not engage travel FAQ
+    trivial_locations = {"sg", "singapore", "jb", "johor", "johor bahru"}
+    travel_keywords = [
+        "how to get", "get to", "directions", "route", "from singapore", "from sg",
+        "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
+        "checkpoint", "immigration", "customs", "woodlands", "tuas", "cw", "shuttle",
+        "grab", "taxi", "drive"
+    ]
+    if q in trivial_locations:
+        print("[TRAVEL_FLOW] Skipping: trivial location token; not a travel query.")
+        return None
+    # Require either at least 3 tokens or a clear travel keyword/phrase
+    if len(q.split()) < 3 and not any(kw in q for kw in travel_keywords):
+        print("[TRAVEL_FLOW] Skipping: input too short and no travel keywords.")
+        return None
+
     # --- Step 1: Generate an embedding for the user's query ---
     try:
         print("[TRAVEL_FLOW] Generating embedding for user query...")
