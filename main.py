@@ -289,17 +289,32 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
     # C. Intent Heuristics (Safety Net only if gatekeeper low confidence)
     if intent is None:
-        search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "nearby", "best"]
-        service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
-        has_search = any(k in lower_msg for k in search_triggers)
-        has_service = any(k in lower_msg for k in service_triggers)
-        if has_search or has_service:
-            print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
-            intent = ChatIntent.FIND_CLINIC
+        # 1) QnA shortcut: classic question patterns
+        qna_triggers_starts = ["what is", "what are", "is it", "does", "how often", "how long", "why", "when", "can i", "should i"]
+        if any(lower_msg.startswith(p) for p in qna_triggers_starts):
+            intent = ChatIntent.GENERAL_DENTAL_QUESTION
+        else:
+            # 2) Travel override: clear travel phrasing
+            travel_keywords = [
+                "how to get", "get to", "directions", "route", "from singapore", "from sg",
+                "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
+                "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw"
+            ]
+            if any(k in lower_msg for k in travel_keywords):
+                intent = ChatIntent.TRAVEL_FAQ
+            else:
+                # 3) Dental find clinic heuristics
+                search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "book", "appointment", "nearby", "best"]
+                service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
+                has_search = any(k in lower_msg for k in search_triggers)
+                has_service = any(k in lower_msg for k in service_triggers)
+                if has_search or has_service:
+                    print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
+                    intent = ChatIntent.FIND_CLINIC
 
     # D. Semantic Travel FAQ Check
-    # Only run this if it's NOT a clear dental question
-    if intent is None:
+    # Run if explicitly routed to TRAVEL_FAQ or if still no intent
+    if intent == ChatIntent.TRAVEL_FAQ or intent is None:
         print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
         travel_resp = handle_travel_query(
             user_query=latest_user_message,
@@ -353,21 +368,22 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             location_pref = inferred
             state.pop("awaiting_location", None)
 
-        # Explicit Prompt for Location
+          # Explicit Prompt for Location
+          # On very first turn, always confirm location unless user clearly specified one.
         if not location_pref and not state.get("awaiting_location", False):
-             is_first_turn = len(query.history) == 1
-             if is_first_turn:
-                 state["awaiting_location"] = True
-                 response_data = {
+            is_first_turn = len(query.history) == 1
+            if is_first_turn:
+                state["awaiting_location"] = True
+                response_data = {
                     "response": "Which country would you like to explore?",
                     "meta": {"type": "location_prompt", "options": [{"key": "jb", "label": "JB"}, {"key": "sg", "label": "SG"}, {"key": "both", "label": "Both"}]},
                     "applied_filters": {}, "candidate_pool": [], "booking_context": {}
-                 }
-                 updated_history = [msg.model_dump() for msg in query.history]
-                 updated_history.append({"role": "assistant", "content": response_data["response"]})
-                 update_session(session_id, secure_user_id, state, updated_history)
-                 response_data["session_id"] = session_id
-                 return response_data
+                }
+                updated_history = [msg.model_dump() for msg in query.history]
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                update_session(session_id, secure_user_id, state, updated_history)
+                response_data["session_id"] = session_id
+                return response_data
 
         # Execute Find Clinic
         effective_history = query.history
