@@ -489,11 +489,21 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         return None
 
     inferred = infer_location_from_text(latest_user_message)
-    if inferred and (awaiting_location or not location_preference):
+    
+    # Detect explicit location change requests
+    location_change_triggers = [
+        "switch to", "change to", "show me", "see", "instead", "rather", "prefer"
+    ]
+    wants_location_change = any(trigger in message_lower for trigger in location_change_triggers) and inferred and inferred != location_preference
+    
+    if inferred and (awaiting_location or not location_preference or wants_location_change):
         location_preference = inferred
         state_update['location_preference'] = inferred
         state_update['awaiting_location'] = False
-        print(f"[LOCATION] Inferred and set location_preference to: {inferred}")
+        if wants_location_change:
+            print(f"[LOCATION] User requested location change to: {inferred}")
+        else:
+            print(f"[LOCATION] Inferred and set location_preference to: {inferred}")
 
     # --- SEARCH INTENT & LOCATION PROMPT TIMING ---
     message_lower = latest_user_message.lower()
@@ -811,9 +821,18 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # Attach explicit country info for UI clarity
     if location_preference:
         final_filters['country'] = 'SG' if location_preference == 'sg' else ('MY' if location_preference == 'jb' else 'SG+MY')
+    
+    # Add location context message to help users understand filtering
+    location_context = ""
+    if location_preference == 'sg':
+        location_context = "\\n\\n_Showing clinics in Singapore. Want to see JB clinics instead? Just ask!_"
+    elif location_preference == 'jb':
+        location_context = "\\n\\n_Showing clinics in Johor Bahru. Want to see Singapore clinics instead? Just ask!_"
+    else:
+        location_context = "\\n\\n_Showing clinics from both Singapore and Johor Bahru._"
 
     final_response_data = {
-        "response": response_text,
+        "response": response_text + location_context,
         "applied_filters": final_filters,
         "candidate_pool": cleaned_candidate_pool,  # Use the new, clean list
         "booking_context": {}

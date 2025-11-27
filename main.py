@@ -312,9 +312,20 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     intent = None
     gatekeeper_decision = None
 
-    # A. Check for ordinal references to existing clinics (Priority #1)
+    # A. Check for travel intent FIRST (Priority #1 - before ordinal)
+    # If query has both ordinal reference AND travel keywords, it's a travel query
+    travel_keywords = [
+        "how to get", "get to", "directions", "route", "from singapore", "from sg",
+        "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
+        "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw",
+        "transport", "travel", "commute"
+    ]
+    has_travel_intent = any(k in lower_msg for k in travel_keywords)
+    
+    # B. Check for ordinal references to existing clinics (Priority #2)
+    # But skip if this is primarily a travel query
     ordinal_pattern = r'\b(first|second|third|1st|2nd|3rd|#1|#2|#3)\b.*(clinic|one|option|list)'
-    if re.search(ordinal_pattern, lower_msg, re.IGNORECASE):
+    if re.search(ordinal_pattern, lower_msg, re.IGNORECASE) and not has_travel_intent:
         if not candidate_clinics:
             print(f"[trace:{trace_id}] [ORDINAL] Pattern detected but no candidates available.")
             state["awaiting_location"] = True
@@ -363,12 +374,12 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 response_data["session_id"] = session_id
                 return response_data
 
-    # B. Check for booking intent (Priority #2)
+    # C. Check for booking intent (Priority #3)
     if detect_booking_intent(latest_user_message, candidate_clinics):
         intent = ChatIntent.BOOK_APPOINTMENT
         print(f"[trace:{trace_id}] [BOOKING] Detected booking intent via signals.")
 
-    # C. Check if currently booking (Priority #3)
+    # D. Check if currently booking (Priority #4)
     if intent is None:
         if booking_context.get('status') == 'confirming_details':
             user_reply = latest_user_message.strip().lower()
@@ -379,7 +390,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         elif booking_context.get('status') == 'gathering_info':
             intent = ChatIntent.BOOK_APPOINTMENT
     
-    # D. Gatekeeper (Priority #4 - decision-maker when not clear from heuristics)
+    # E. Gatekeeper (Priority #5 - decision-maker when not clear from heuristics)
     if intent is None:
         try:
             gate_prompt = f"""
@@ -404,15 +415,10 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         except Exception as e:
             print(f"[trace:{trace_id}] [Gatekeeper] error: {e}")
 
-    # E. Intent Heuristics (Safety Net)
+    # F. Intent Heuristics (Safety Net - Priority #6)
     if intent is None:
-        # 1) Travel override: clear travel phrasing (before QnA)
-        travel_keywords = [
-            "how to get", "get to", "directions", "route", "from singapore", "from sg",
-            "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
-            "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw"
-        ]
-        if any(k in lower_msg for k in travel_keywords):
+        # 1) Travel override: clear travel phrasing (before QnA) - reuse travel_keywords from above
+        if has_travel_intent:
             intent = ChatIntent.TRAVEL_FAQ
         # 2) QnA shortcut: educational questions take PRIORITY over service matching
         elif any(lower_msg.startswith(p) or f" {p}" in lower_msg for p in [
@@ -431,7 +437,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 print(f"[trace:{trace_id}] [INFO] Heuristic detected Dental Intent (search={has_search}, service={has_service})")
                 intent = ChatIntent.FIND_CLINIC
 
-    # F. Semantic Travel FAQ Check
+    # G. Semantic Travel FAQ Check (Priority #7)
     # Run if explicitly routed to TRAVEL_FAQ or if still no intent
     if intent == ChatIntent.TRAVEL_FAQ or intent is None:
         print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
