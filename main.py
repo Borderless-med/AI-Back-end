@@ -122,21 +122,25 @@ def resolve_ordinal_reference(message: str, candidate_pool: list) -> dict | None
     import re
     if not candidate_pool:
         return None
+    
     msg_lower = message.lower().strip()
-    # Pattern: optional prefix + ordinal
-    pattern = r'^(?:show|select|open|details?\s+(?:of|for)|tell me about|info on|remember)?\s*(first|second|third|1st|2nd|3rd|top|#?1|#?2|#?3)\s*(?:clinic|one|option)?'
-    match = re.search(pattern, msg_lower)
-    if not match:
-        return None
-    ordinal = match.group(1)
-    ordinal_map = {
-        'first': 0, '1st': 0, '1': 0, '#1': 0, 'top': 0,
-        'second': 1, '2nd': 1, '2': 1, '#2': 1,
-        'third': 2, '3rd': 2, '3': 2, '#3': 2
-    }
-    idx = ordinal_map.get(ordinal)
-    if idx is not None and idx < len(candidate_pool):
-        return candidate_pool[idx]
+    
+    # Improved pattern with word boundaries for each ordinal variant
+    ordinal_patterns = [
+        (r'\b(first|1st|#1|one)\b', 0),
+        (r'\b(second|2nd|#2|two)\b', 1),
+        (r'\b(third|3rd|#3|three)\b', 2),
+        (r'\b(fourth|4th|#4|four)\b', 3),
+        (r'\b(fifth|5th|#5|five)\b', 4)
+    ]
+    
+    for pattern, index in ordinal_patterns:
+        if re.search(pattern, msg_lower):
+            if index < len(candidate_pool):
+                print(f"[ORDINAL] Matched pattern '{pattern}' → returning index {index}")
+                return candidate_pool[index]
+    
+    print(f"[ORDINAL] No ordinal pattern matched in message: '{message}'")
     return None
 
 def detect_booking_intent(message: str, candidate_pool: list) -> bool:
@@ -420,14 +424,25 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         # 1) Travel override: clear travel phrasing (before QnA) - reuse travel_keywords from above
         if has_travel_intent:
             intent = ChatIntent.TRAVEL_FAQ
-        # 2) QnA shortcut: educational questions take PRIORITY over service matching
+        # 2) Remember session check (NEW - BEFORE QnA and search triggers)
+        # Must check BEFORE search triggers because "recommend" appears in both
+        elif any(k in lower_msg for k in [
+            "remind", "recall", "remember", 
+            "what did", "what clinics", "which clinics",
+            "previous", "earlier", "before", "last time",
+            "you showed", "you recommended", "you suggested",
+            "from before", "from earlier"
+        ]):
+            print(f"[trace:{trace_id}] [INFO] Heuristic detected Remember Session intent.")
+            intent = ChatIntent.REMEMBER_SESSION
+        # 3) QnA shortcut: educational questions take PRIORITY over service matching
         elif any(lower_msg.startswith(p) or f" {p}" in lower_msg for p in [
             "what is", "what are", "tell me about", "tell me more", "explain",
             "how does", "why is", "is it", "does", "should i", "can i",
             "how often", "how long", "when should", "how do you", "how do i"
         ]):
             intent = ChatIntent.GENERAL_DENTAL_QUESTION
-        # 3) Dental find clinic heuristics
+        # 4) Dental find clinic heuristics (moved to position 4)
         else:
             search_triggers = ["find", "recommend", "suggest", "clinic", "dentist", "appointment", "nearby", "best"]
             service_triggers = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", "whitening", "crown", "filling", "braces", "wisdom", "gum", "veneers"]
@@ -491,6 +506,15 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
 
         # Location Logic
         location_pref = state.get("location_preference")
+        
+        # Fresh session detection: if no candidate_pool and no applied_filters, 
+        # clear location_preference to force location prompt for new searches
+        is_fresh_session = not candidate_clinics and not previous_filters
+        if is_fresh_session and location_pref:
+            print(f"[trace:{trace_id}] Fresh session detected - clearing persisted location preference.")
+            location_pref = None
+            state["location_preference"] = None
+        
         inferred = normalize_location_terms(latest_user_message)
         if inferred:
             state["location_preference"] = inferred

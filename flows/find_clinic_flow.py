@@ -37,6 +37,32 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     # a direct name match before running the broader filtering logic. This prevents failures when a user asks
     # directly for details about "Some Dental Clinic" without providing a service. We bypass rating/review gates
     # for direct lookups to avoid hiding requested clinics.
+    
+    def should_attempt_direct_lookup(message: str) -> bool:
+        """Guard function to prevent DirectLookup from overfiring on non-clinic-name queries."""
+        if not message:
+            return False
+        lower = message.lower().strip()
+        
+        # Block direct lookup for queries with intent keywords that should route elsewhere
+        remember_indicators = ["remind", "recall", "remember", "what did", "what clinics", "which clinics", 
+                               "you showed", "you recommended", "you suggested", "from before", "from earlier"]
+        booking_indicators = ["help me book", "start booking", "make appointment", "schedule", "book an appointment"]
+        location_change_indicators = ["switch to", "change to", "rather than", "instead of", "prefer"]
+        
+        # If query contains these indicators, skip DirectLookup (let routing handle it)
+        if any(k in lower for k in remember_indicators):
+            print(f"[DirectLookup] Skipping - detected remember session intent.")
+            return False
+        if any(k in lower for k in booking_indicators):
+            print(f"[DirectLookup] Skipping - detected booking intent.")
+            return False
+        if any(k in lower for k in location_change_indicators):
+            print(f"[DirectLookup] Skipping - detected location change intent.")
+            return False
+        
+        return True
+    
     def attempt_direct_clinic_lookup(message: str):
         if not message:
             return None
@@ -336,9 +362,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             "state_update": state_update_local
         }
 
-    direct_clinic_result = attempt_direct_clinic_lookup(latest_user_message)
-    if direct_clinic_result:
-        return direct_clinic_result
+    # Apply DirectLookup guard before attempting direct clinic lookup
+    if should_attempt_direct_lookup(latest_user_message):
+        direct_clinic_result = attempt_direct_clinic_lookup(latest_user_message)
+        if direct_clinic_result:
+            return direct_clinic_result
+    else:
+        print(f"[DirectLookup] Guard blocked attempt for: '{latest_user_message}'")
 
     # Known township-to-country hints to improve inference and avoid wrong-table queries
     TOWNSHIP_COUNTRY_MAP = {
