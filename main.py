@@ -437,7 +437,15 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 return response_data
 
     # C. Check for booking intent (Priority #3)
-    if detect_booking_intent(latest_user_message, candidate_clinics):
+    # Early booking detection to prevent travel FAQ hijacking
+    booking_keywords = ["book", "appointment", "schedule", "reserve", "confirm", "booking"]
+    has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
+    has_booking_context = bool(candidate_clinics or booking_context.get("status"))
+    
+    if has_booking_intent and has_booking_context:
+        print(f"[trace:{trace_id}] [BOOKING] Early booking detection - overriding travel/semantic checks.")
+        intent = ChatIntent.BOOK_APPOINTMENT
+    elif detect_booking_intent(latest_user_message, candidate_clinics):
         intent = ChatIntent.BOOK_APPOINTMENT
         print(f"[trace:{trace_id}] [BOOKING] Detected booking intent via signals.")
 
@@ -566,17 +574,20 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         location_pref = state.get("location_preference")
         service_pending = state.get("service_pending", False)
         
-        # Fresh session detection: only clear location if NOT in middle of service flow
-        # Track conversation progress with service_pending flag to avoid clearing mid-conversation
-        is_fresh_session = not candidate_clinics and not previous_filters
+        # Conversation phase detection to prevent clearing location during refinement
+        has_established_location = bool(state.get("location_preference"))
+        is_empty_state = not candidate_clinics and not previous_filters
+        is_multi_turn = len(conversation_history) > 2
+        is_refining_search = has_established_location and is_empty_state and is_multi_turn
         is_awaiting_location = state.get("awaiting_location", False)
         
-        if is_fresh_session and location_pref and not service_pending and not is_awaiting_location:
-            # Only clear if:
-            # 1. Empty state (fresh session) AND
-            # 2. Location was set previously AND
-            # 3. NOT in middle of service flow (service_pending=False) AND
-            # 4. NOT waiting for location response
+        if is_refining_search and not service_pending:
+            # User is refining search (location already set, multi-turn conversation)
+            # Example: "JB" → "dental scaling" → system asks for service again
+            # PRESERVE location to avoid infinite loop
+            print(f"[trace:{trace_id}] Refinement phase detected - preserving location: {location_pref}")
+        elif is_frontend_fresh_start and is_empty_state:
+            # True fresh start: frontend sent 1-message history
             print(f"[trace:{trace_id}] True fresh session - clearing persisted location preference.")
             location_pref = None
             state["location_preference"] = None

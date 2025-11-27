@@ -967,4 +967,227 @@ You are an AI intent classifier for a dental clinic search chatbot.
 
 ### Additional Notes
 - DirectLookup guard is working (log shows "Fuzzy match below threshold" and no direct clinic response), so the remaining issues are squarely in the session-state + routing layers.
-- Once we force-clear stale state on fresh message histories and add the location-change override, we should retest the entire flow: `"best clinic for root canal" → (prompt) → JB → "show me SG instead" → "root canals in JB" → "dental scaling treatment".
+- Once we force-clear stale state on fresh message histories and add the location-change override, we should retest the entire flow: `"best clinic for root canal" → (prompt) → JB → "show me SG instead" → "root canals in JB" → "dental scaling treatment"`.
+
+---
+
+## 📉 V5 Regression Snapshot (Session `9a71f11f-f2b5-4d61-92fb-2365a8b48142` - Nov 27, 2025)
+
+### Issue 1: Infinite Loop - Location ↔ Service Prompt Cycle
+
+**Symptom:** User stuck in 2-turn loop asking for location then service repeatedly.
+
+| Turn | User Input | Bot Response | Backend State | Root Cause |
+|------|-----------|--------------|---------------|------------|
+| 1 | "Best clinics for dental scaling" | "Which country would you like to explore?" | `location_preference=None` | ✅ Correct (fresh start) |
+| 2 | "Johor Bahru" | "Great! I'll search for clinics in JB. What service are you looking for?" | `location_preference='jb'`, `applied_filters={}` | ✅ Correct (captured location) |
+| 3 | "Dental scaling" | "Which country would you like to explore?" ❌ | V3 logic: `is_fresh_session=True` → clears location | **BUG: Service-only query triggers fresh-session clear** |
+| 4 | "Johor Bahru" | "Great! I'll search for clinics in JB. What service are you looking for?" | Re-captured location | Loop repeats |
+| 5 | "Dental Scaling" | "Which country would you like to explore?" ❌ | Location cleared again | Loop continues |
+| 7 | "Dental scaling in JB" | Shows 3 clinics ✅ | Both location + service extracted together | Loop breaks when BOTH provided |
+
+**Render Log Evidence (Trace `4287ab9d-41a8-49fe-961b-a48cf10caf1c` - Turn 3):**
+```
+[INFO] Heuristic detected Dental Intent (search=False, service=True)
+True fresh session - clearing persisted location preference.  ← WRONG!
+[DirectLookup] Guard blocked attempt for: 'Dental scaling in JB'
+Factual Brain extracted: {'services': ['scaling'], 'township': 'Johor Bahru'}
+[ConversationProgress] Service extracted but no search executed yet - marking service_pending=True
+```
+
+**Console Evidence:**
+```json
+// Turn 3 - User says "Dental scaling"
+"applied_filters": {},  ← Empty state
+"candidate_pool": [],   ← Empty state
+"location_preference": null ← Backend cleared it!
+
+// Turn 4 - Backend asks for location AGAIN
+{"response": "Which country would you like to explore?"}
+```
+
+**V4 Logic Gap:**
+- V4 checks `len(history)==1` to detect fresh start → ✅ CORRECT for initial query
+- But doesn't distinguish **multi-turn refinement** (location set, service needed) from **true fresh start**
+- V3 logic: `is_fresh_session = not candidate_clinics and not previous_filters` → TRUE after location selection (empty state)
+- Result: Location cleared on service-only query → Loop begins
+
+**V5 Fix:**
+```python
+# New conversation phase detection
+has_established_location = bool(state.get("location_preference"))
+is_empty_state = not candidate_clinics and not previous_filters
+is_multi_turn = len(conversation_history) > 2
+is_refining_search = has_established_location and is_empty_state and is_multi_turn
+
+if is_refining_search and not service_pending:
+    print(f"Refinement phase - preserving location: {location_pref}")
+    # DON'T CLEAR LOCATION - user is refining after location selection
+elif is_frontend_fresh_start:
+    # True fresh start: len(history)==1
+    location_pref = None
+```
+
+**Why V5 Will Succeed:**
+- **Phase Awareness:** Distinguishes fresh start (`len==1`) from refinement phase (`len>2` + location set)
+- **State Preservation:** Location persists during multi-turn service selection
+- **service_pending Still Works:** V3's flag-based tracking remains as fallback
+
+---
+
+### Issue 2: Booking Intent Routes to Travel FAQ
+
+**Symptom:** User says "yes, book an appointment" → Bot responds with travel FAQ apology message.
+
+**User Query:** `"yes, book an appointmnet"`  
+**Expected:** Booking flow initiation  
+**Actual:** `"I'm sorry, I don't have specific information about that. I can only answer questions about travel between Singapore and JB for dental appointments..."`
+
+**Render Log Evidence (Trace `a401e46c-ed20-4f7f-b9f1-aa072c81c00b`):**
+```
+[ORDINAL] No ordinal pattern matched in: 'yes, book an appointmnet'
+[Gatekeeper] intent=None conf=0.00
+[INFO] Engaging Semantic Travel FAQ check.  ← RUNS BEFORE BOOKING DETECTION
+[TRAVEL_FLOW] Received query: 'yes, book an appointmnet'
+[TRAVEL_FLOW] Found 3 potential matches.
+[INFO] Semantic Travel FAQ found a strong match. Returning response.
+```
+
+**Console Evidence:**
+```json
+// Frontend shows 3 clinics with booking CTA
+"candidate_pool": [3 clinics],
+"applied_filters": {country: "MY", services: ["scaling"]}
+
+// User confirms booking
+{"role": "user", "content": "yes, book an appointmnet"}
+
+// Backend returns travel FAQ instead of booking flow
+{"role": "model", "content": "I'm sorry, I don't have specific information about that..."}
+```
+
+**V4 Intent Priority (INCORRECT):**
+```
+1. Ordinal (Priority #1) → No match ❌
+2. Gatekeeper (Priority #5) → None (low conf) ❌
+3. Travel FAQ Semantic Check → ✅ Matches (WRONG!)
+4. Booking Detection (Priority #3) → Never runs ❌
+```
+
+**Root Cause:**
+- Travel FAQ semantic check runs at Priority #6 (after gatekeeper)
+- Booking detection runs at Priority #3 but ONLY via `detect_booking_intent()` function
+- User's simple "yes" doesn't match booking signals ("book", "appointment" in isolation)
+- Semantic embedding for "yes, book appointment" matches travel FAQ vectors (false positive)
+- Travel FAQ hijacks the turn before booking logic ever runs
+
+**V5 Fix - Corrected Priority:**
+```python
+# C. Check for booking intent (Priority #3)
+# Early booking detection BEFORE travel FAQ semantic check
+booking_keywords = ["book", "appointment", "schedule", "reserve", "confirm", "booking"]
+has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
+has_booking_context = bool(candidate_clinics or booking_context.get("status"))
+
+if has_booking_intent and has_booking_context:
+    print(f"[BOOKING] Early booking detection - overriding travel/semantic checks.")
+    intent = ChatIntent.BOOK_APPOINTMENT
+```
+
+**Why V5 Will Succeed:**
+- Booking keywords checked BEFORE semantic embedding
+- Requires active context (clinics shown OR booking_status active) → Prevents false positives
+- Runs at Priority #3 (before Travel FAQ at Priority #6)
+- Explicit override: Once booking detected, skip travel/semantic checks
+
+---
+
+## 🎯 V5 Success Criteria
+
+### Test Sequence 1: Multi-Turn Service Refinement (No Loop)
+```
+1. User: "Best clinics for dental scaling" → Location prompt ✅
+2. User: "Johor Bahru" → Service prompt ✅
+3. User: "Dental scaling" → Shows JB clinics (NO LOOP) ✅
+4. User: "braces" → Shows JB braces clinics (preserved location) ✅
+5. User: "root canal treatment" → Shows JB root canal clinics ✅
+```
+
+**Expected Log:**
+```
+[trace:*] Refinement phase detected - preserving location: jb
+[ConversationProgress] Service extracted but no search executed yet - marking service_pending=True
+[ConversationProgress] Search executed successfully - clearing service_pending flag
+```
+
+---
+
+### Test Sequence 2: Booking Intent Recognition
+```
+1. User: "Best clinics for dental scaling" → Location prompt ✅
+2. User: "Johor Bahru" → Service prompt ✅
+3. User: "Dental scaling in JB" → Shows 3 clinics ✅
+4. User: "tell me more about the third clinic" → Clinic details ✅
+5. User: "yes, book an appointment" → Booking flow (NOT travel FAQ) ✅
+6. User confirms clinic → "Great! Please provide your details..." ✅
+7. User provides info → Booking form opens ✅
+```
+
+**Expected Log:**
+```
+[trace:*] [BOOKING] Early booking detection - overriding travel/semantic checks.
+Starting Booking Mode...
+[DETERMINISTIC] User confirmed. Moving to gathering_info.
+In Booking Mode: Capturing user info...
+```
+
+---
+
+### V5 Changes Summary
+
+**File:** `main.py`
+
+**Change 1: Booking Priority Fix (Lines ~440-454)**
+```python
+# OLD V4: Booking detection only via detect_booking_intent() function
+if detect_booking_intent(latest_user_message, candidate_clinics):
+    intent = ChatIntent.BOOK_APPOINTMENT
+
+# NEW V5: Early keyword detection with context check
+booking_keywords = ["book", "appointment", "schedule", "reserve", "confirm", "booking"]
+has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
+has_booking_context = bool(candidate_clinics or booking_context.get("status"))
+
+if has_booking_intent and has_booking_context:
+    intent = ChatIntent.BOOK_APPOINTMENT  # Overrides travel/semantic
+```
+
+**Change 2: Infinite Loop Fix (Lines ~565-585)**
+```python
+# OLD V4: Simple empty-state check
+is_fresh_session = not candidate_clinics and not previous_filters
+if is_fresh_session and location_pref and not service_pending:
+    location_pref = None  # Cleared during refinement
+
+# NEW V5: Multi-turn phase detection
+has_established_location = bool(state.get("location_preference"))
+is_empty_state = not candidate_clinics and not previous_filters
+is_multi_turn = len(conversation_history) > 2
+is_refining_search = has_established_location and is_empty_state and is_multi_turn
+
+if is_refining_search:
+    # PRESERVE location during refinement phase
+elif is_frontend_fresh_start:
+    location_pref = None  # Only clear on true fresh start
+```
+
+---
+
+### Deployment Status
+
+**Commit:** (Pending)  
+**Branch:** main  
+**Files Modified:** main.py, TEST_EXECUTION_REPORT.md  
+**Next Step:** User validation in production
+
+
