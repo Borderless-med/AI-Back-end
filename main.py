@@ -276,9 +276,25 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         state = session.get("state") or {}
 
     if not query.history: return {"response": "Error: History is empty.", "session_id": session_id}
-    
-    latest_user_message = query.history[-1].content
+
+    conversation_history = query.history
+    latest_user_message = conversation_history[-1].content
     lower_msg = latest_user_message.lower()
+
+    # Frontend sometimes reuses an old session_id but sends a brand new history
+    # (only the latest user turn). Treat that as authoritative signal to drop
+    # any persisted filters so we surface the location prompt again.
+    is_frontend_fresh_start = len(conversation_history) == 1 and conversation_history[0].role == "user"
+    if is_frontend_fresh_start:
+        if state.get("location_preference") or state.get("applied_filters") or state.get("candidate_pool"):
+            print(f"[trace:{trace_id}] [INFO] Frontend provided fresh history - clearing stale session state.")
+        state["applied_filters"] = {}
+        state["candidate_pool"] = []
+        state["location_preference"] = None
+        state.pop("service_pending", None)
+        state.pop("has_searched_clinics", None)
+        state.pop("last_candidate_pool", None)
+
     previous_filters = state.get("applied_filters", {})
     candidate_clinics = state.get("candidate_pool", [])
     booking_context = state.get("booking_context", {})
@@ -342,6 +358,31 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         "transport", "travel", "commute"
     ]
     has_travel_intent = any(k in lower_msg for k in travel_keywords)
+
+    # Detect explicit location change requests ("show me JB instead", "switch to SG")
+    location_change_triggers = ["show me", "switch to", "change to", "rather", "instead", "prefer"]
+    location_change_target = normalize_location_terms(latest_user_message)
+    has_location_change_intent = location_change_target and any(trigger in lower_msg for trigger in location_change_triggers)
+    has_active_search_context = bool(candidate_clinics or previous_filters or state.get("last_candidate_pool"))
+
+    if has_location_change_intent and has_active_search_context:
+        print(f"[trace:{trace_id}] [INFO] Detected explicit location change request → {location_change_target.upper()}.")
+        state["location_preference"] = location_change_target
+        state["awaiting_location"] = False
+        state["candidate_pool"] = []  # force fresh search for new geography
+        candidate_clinics = []
+        if isinstance(previous_filters, dict):
+            updated_filters = dict(previous_filters)
+            if location_change_target == "sg":
+                updated_filters["country"] = "SG"
+            elif location_change_target == "jb":
+                updated_filters["country"] = "MY"
+            else:
+                updated_filters.pop("country", None)
+            state["applied_filters"] = updated_filters
+            previous_filters = updated_filters
+        has_travel_intent = False  # override travel heuristic so we do not enter FAQ flow
+        intent = ChatIntent.FIND_CLINIC
     
     # B. Check for ordinal references to existing clinics (Priority #2)
     # But skip if this is primarily a travel query

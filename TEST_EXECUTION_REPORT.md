@@ -954,3 +954,17 @@ You are an AI intent classifier for a dental clinic search chatbot.
 **Report Generated:** November 27, 2025  
 **Agent:** GitHub Copilot (Claude Sonnet 4.5)  
 **Next Action:** Proceed with Fix Implementation (Phase 1)
+
+---
+
+## 📈 Latest Regression Snapshot (Session `9a71f11f-f2b5-4d61-92fb-2365a8b48142`)
+
+| Observation | Evidence | Root Cause Hypothesis | Fix Direction |
+|-------------|----------|-----------------------|---------------|
+| **Location prompt still missing on very first question** | Console shows `applied_filters: {services: [...], country: 'SG'}` immediately after the very first request (`history` contains only `"best clinic for root canal"`). Render trace `912be132-4c52-4ab0-be94-c92ad8e21218` never logs the new `[trace:*] True fresh session - clearing...` message, proving `state.location_preference` already existed when the request entered `handle_find_clinic`. | Our V3 logic only clears location when `candidate_pool` and `previous_filters` are empty **and** the in-memory `state['location_preference']` is populated. However, when the frontend starts a "new" conversation it reuses the previous `session_id`, so Supabase loads the old `state` (with `location_preference='sg'`). Because we overwrite `state` with the request payload **after** reading from Supabase, the backend never sees `candidate_clinics`/`applied_filters` as empty, so the "fresh session" detector never triggers. | Treat "single message history" as authoritative indicator of a fresh chat. Before routing, if `len(history)==1`, force-clear `location_preference`, `candidate_pool`, `applied_filters`, and `service_pending` so the location prompt logic can run. |
+| **"Show me JB instead" routed to Travel FAQ** | Render trace `f7dfd7df-d25d-41a7-bf9e-55a4966dc936` logs `[INFO] Engaging Semantic Travel FAQ check.` followed by FAQ answer about buses/trains. The query history right before that call contains the bot's SG clinic list, so the user clearly intended a location change, not travel instructions. | Gatekeeper returned `None` again, and Priority-6 heuristics marked `has_travel_intent=True` because the message matches travel keyword `show me ... JB`. We never short-circuit on the presence of an active `candidate_pool` + location change trigger, so the travel heuristic wins. | Add a "location change override" ahead of travel heuristics: if the user asks to "show me JB/SG instead" **and** we have prior clinics in state, force intent to `FIND_CLINIC`, set `awaiting_location=True`, and skip Travel FAQ entirely. |
+| **Unable to re-trigger location prompt → infinite-loop test blocked** | Because the user never sees location buttons on the first message, we cannot reproduce the location/service loop fix we shipped in V3. | Same root cause as the first row: stale session state prevents location prompt from appearing, so the new loop-breaking logic never gets exercised. | Same fix as first row. |
+
+### Additional Notes
+- DirectLookup guard is working (log shows "Fuzzy match below threshold" and no direct clinic response), so the remaining issues are squarely in the session-state + routing layers.
+- Once we force-clear stale state on fresh message histories and add the location-change override, we should retest the entire flow: `"best clinic for root canal" → (prompt) → JB → "show me SG instead" → "root canals in JB" → "dental scaling treatment".
