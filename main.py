@@ -521,19 +521,26 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             response_data["session_id"] = session_id
             return response_data
 
-        # Location Logic
+        # Location Logic with Conversation Progress Tracking
         location_pref = state.get("location_preference")
+        service_pending = state.get("service_pending", False)
         
-        # Fresh session detection: only clear location if NOT in middle of location flow
-        # Check awaiting_location flag to avoid clearing during multi-turn conversations
+        # Fresh session detection: only clear location if NOT in middle of service flow
+        # Track conversation progress with service_pending flag to avoid clearing mid-conversation
         is_fresh_session = not candidate_clinics and not previous_filters
         is_awaiting_location = state.get("awaiting_location", False)
         
-        if is_fresh_session and location_pref and not is_awaiting_location:
-            # Only clear if location flow is COMPLETE (awaiting_location=False)
-            print(f"[trace:{trace_id}] Fresh session detected (not awaiting location) - clearing persisted location preference.")
+        if is_fresh_session and location_pref and not service_pending and not is_awaiting_location:
+            # Only clear if:
+            # 1. Empty state (fresh session) AND
+            # 2. Location was set previously AND
+            # 3. NOT in middle of service flow (service_pending=False) AND
+            # 4. NOT waiting for location response
+            print(f"[trace:{trace_id}] True fresh session - clearing persisted location preference.")
             location_pref = None
             state["location_preference"] = None
+        elif service_pending:
+            print(f"[trace:{trace_id}] Service pending - preserving location preference: {location_pref}")
         elif is_awaiting_location:
             print(f"[trace:{trace_id}] Awaiting location response - preserving location preference.")
         
@@ -542,12 +549,20 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             state["location_preference"] = inferred
             location_pref = inferred
             state.pop("awaiting_location", None)
+            # Clear service_pending when location is updated
+            state.pop("service_pending", None)
 
-          # Explicit Prompt for Location
-          # On very first turn, always confirm location unless user clearly specified one.
+        # Explicit Prompt for Location
+        # Force location prompt if no location preference AND not waiting for location
+        # This prevents defaulting to SG when user hasn't specified country
         if not location_pref and not state.get("awaiting_location", False):
-            is_first_turn = len(query.history) == 1
-            if is_first_turn:
+            # Check if this is a dental search query (not ordinal/remember reference)
+            requires_search = (
+                not candidate_clinics or
+                latest_user_message.lower() not in ["first", "second", "third", "first one", "second one", "third one"]
+            )
+            
+            if requires_search:
                 state["awaiting_location"] = True
                 response_data = {
                     "response": "Which country would you like to explore?",

@@ -496,6 +496,12 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             if heuristic_svc not in current_filters['services']:
                 current_filters['services'].append(heuristic_svc)
                 print(f"[Heuristic] Added additional service '{heuristic_svc}' (multi-service stacking)")
+    
+    # Track conversation progress: Set service_pending if service extracted but pool empty
+    # This helps main.py distinguish "mid-conversation" from "fresh session"
+    if 'services' in current_filters and current_filters['services'] and not candidate_clinics:
+        state_update['service_pending'] = True
+        print(f"[ConversationProgress] Service extracted but no search executed yet - marking service_pending=True")
 
     if 'township' in current_filters and current_filters['township']:
         current_filters['township'] = current_filters['township'].rstrip(string.punctuation).strip()
@@ -897,6 +903,11 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
 
     # This line is our proof. It will print to your server log.
     print(f"DEBUG: Preparing to return {len(cleaned_candidate_pool)} clinics in the candidate pool.")
+
+    # Clear service_pending when search is successfully executed
+    if cleaned_candidate_pool:
+        state_update['service_pending'] = False
+        print(f"[ConversationProgress] Search executed successfully - clearing service_pending flag")
 
     if state_update:
         final_response_data["state_update"] = state_update
