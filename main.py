@@ -118,29 +118,46 @@ def normalize_location_terms(text: str) -> str | None:
     return None
 
 def resolve_ordinal_reference(message: str, candidate_pool: list) -> dict | None:
-    """Resolve ordinal references like 'first clinic', 'second', '1st', etc."""
+    """Resolve ordinal references with compound pattern priority to handle 'second one' correctly."""
     import re
     if not candidate_pool:
         return None
     
     msg_lower = message.lower().strip()
     
-    # Improved pattern with word boundaries for each ordinal variant
-    ordinal_patterns = [
-        (r'\b(first|1st|#1|one)\b', 0),
-        (r'\b(second|2nd|#2|two)\b', 1),
-        (r'\b(third|3rd|#3|three)\b', 2),
-        (r'\b(fourth|4th|#4|four)\b', 3),
-        (r'\b(fifth|5th|#5|five)\b', 4)
+    # PRIORITY 1: Compound patterns (two-word ordinals checked FIRST)
+    # This prevents 'second one' from matching 'one' pattern prematurely
+    compound_patterns = [
+        (r'\bfirst\s+(clinic|one|option)\b', 0),
+        (r'\bsecond\s+(clinic|one|option)\b', 1),
+        (r'\bthird\s+(clinic|one|option)\b', 2),
+        (r'\bfourth\s+(clinic|one|option)\b', 3),
+        (r'\bfifth\s+(clinic|one|option)\b', 4),
     ]
     
-    for pattern, index in ordinal_patterns:
+    for pattern, index in compound_patterns:
         if re.search(pattern, msg_lower):
             if index < len(candidate_pool):
-                print(f"[ORDINAL] Matched pattern '{pattern}' → returning index {index}")
+                print(f"[ORDINAL] Matched compound pattern '{pattern}' → index {index}")
                 return candidate_pool[index]
     
-    print(f"[ORDINAL] No ordinal pattern matched in message: '{message}'")
+    # PRIORITY 2: Simple ordinal patterns (checked SECOND)
+    # Only reached if no compound pattern matched
+    simple_patterns = [
+        (r'\b(first|1st|#1)\b', 0),
+        (r'\b(second|2nd|#2)\b', 1),
+        (r'\b(third|3rd|#3)\b', 2),
+        (r'\b(fourth|4th|#4)\b', 3),
+        (r'\b(fifth|5th|#5)\b', 4),
+    ]
+    
+    for pattern, index in simple_patterns:
+        if re.search(pattern, msg_lower):
+            if index < len(candidate_pool):
+                print(f"[ORDINAL] Matched simple pattern '{pattern}' → index {index}")
+                return candidate_pool[index]
+    
+    print(f"[ORDINAL] No ordinal pattern matched in: '{message}'")
     return None
 
 def detect_booking_intent(message: str, candidate_pool: list) -> bool:
@@ -507,13 +524,18 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         # Location Logic
         location_pref = state.get("location_preference")
         
-        # Fresh session detection: if no candidate_pool and no applied_filters, 
-        # clear location_preference to force location prompt for new searches
+        # Fresh session detection: only clear location if NOT in middle of location flow
+        # Check awaiting_location flag to avoid clearing during multi-turn conversations
         is_fresh_session = not candidate_clinics and not previous_filters
-        if is_fresh_session and location_pref:
-            print(f"[trace:{trace_id}] Fresh session detected - clearing persisted location preference.")
+        is_awaiting_location = state.get("awaiting_location", False)
+        
+        if is_fresh_session and location_pref and not is_awaiting_location:
+            # Only clear if location flow is COMPLETE (awaiting_location=False)
+            print(f"[trace:{trace_id}] Fresh session detected (not awaiting location) - clearing persisted location preference.")
             location_pref = None
             state["location_preference"] = None
+        elif is_awaiting_location:
+            print(f"[trace:{trace_id}] Awaiting location response - preserving location preference.")
         
         inferred = normalize_location_terms(latest_user_message)
         if inferred:

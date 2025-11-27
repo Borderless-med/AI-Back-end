@@ -44,22 +44,49 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             return False
         lower = message.lower().strip()
         
-        # Block direct lookup for queries with intent keywords that should route elsewhere
+        # Block 1: Remember/recall queries
         remember_indicators = ["remind", "recall", "remember", "what did", "what clinics", "which clinics", 
                                "you showed", "you recommended", "you suggested", "from before", "from earlier"]
-        booking_indicators = ["help me book", "start booking", "make appointment", "schedule", "book an appointment"]
-        location_change_indicators = ["switch to", "change to", "rather than", "instead of", "prefer"]
-        
-        # If query contains these indicators, skip DirectLookup (let routing handle it)
         if any(k in lower for k in remember_indicators):
             print(f"[DirectLookup] Skipping - detected remember session intent.")
             return False
+        
+        # Block 2: Booking queries
+        booking_indicators = ["help me book", "start booking", "make appointment", "schedule", "book an appointment"]
         if any(k in lower for k in booking_indicators):
             print(f"[DirectLookup] Skipping - detected booking intent.")
             return False
+        
+        # Block 3: Location change queries
+        location_change_indicators = ["switch to", "change to", "rather than", "instead of", "prefer", "instead"]
         if any(k in lower for k in location_change_indicators):
             print(f"[DirectLookup] Skipping - detected location change intent.")
             return False
+        
+        # Block 4: Service-only queries without clinic name hints (NEW)
+        # Prevents 'dental scaling' or 'scaling in JB' from being treated as clinic names
+        service_keywords = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", 
+                           "whitening", "crown", "filling", "braces", "wisdom tooth", "wisdom teeth",
+                           "gum treatment", "veneers", "bonding", "inlay", "onlay", "extraction"]
+        
+        # Clinic name hints that suggest a proper noun
+        clinic_name_hints = [" dental clinic", " clinic", " dental hub", " hub", " dental centre", 
+                            " dental center", " dental surgery", "dr. ", "doctor ", "klinik "]
+        
+        has_service = any(k in lower for k in service_keywords)
+        has_clinic_hint = any(hint in lower for hint in clinic_name_hints)
+        
+        # If query has service keyword but NO clinic name hints, block DirectLookup
+        # Examples: "scaling", "dental scaling", "root canal in JB" should all be blocked
+        if has_service and not has_clinic_hint:
+            # Additional check: proper noun detection (capitalized words often indicate clinic names)
+            # Split and check if any word is capitalized (excluding first word)
+            words = message.split()
+            has_proper_noun = any(word[0].isupper() for word in words[1:] if len(word) > 2)
+            
+            if not has_proper_noun:
+                print(f"[DirectLookup] Skipping - detected service-only query without clinic name.")
+                return False
         
         return True
     
