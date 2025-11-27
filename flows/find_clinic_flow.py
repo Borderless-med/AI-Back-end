@@ -491,6 +491,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     inferred = infer_location_from_text(latest_user_message)
     
     # Detect explicit location change requests
+    message_lower = latest_user_message.lower()
     location_change_triggers = [
         "switch to", "change to", "show me", "see", "instead", "rather", "prefer"
     ]
@@ -506,7 +507,6 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             print(f"[LOCATION] Inferred and set location_preference to: {inferred}")
 
     # --- SEARCH INTENT & LOCATION PROMPT TIMING ---
-    message_lower = latest_user_message.lower()
     search_trigger_keywords = ["clinic", "dentist", "recommend", "find", "looking", "search"]
     search_intent_detected = any(k in message_lower for k in search_trigger_keywords) or ('services' in current_filters)
 
