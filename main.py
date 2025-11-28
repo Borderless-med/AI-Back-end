@@ -388,7 +388,14 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     # But skip if this is primarily a travel query
     ordinal_pattern = r'\b(first|second|third|1st|2nd|3rd|#1|#2|#3)\b.*(clinic|one|option|list)'
     if re.search(ordinal_pattern, lower_msg, re.IGNORECASE) and not has_travel_intent:
-        if not candidate_clinics:
+        # V8 FIX: Check for booking keywords FIRST to prevent ordinal hijacking
+        booking_keywords = ["book", "appointment", "schedule", "reserve", "make an appointment", "i want to book"]
+        has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
+        
+        if has_booking_intent:
+            print(f"[trace:{trace_id}] [V8 FIX] Booking keyword detected - skipping ordinal check")
+            intent = ChatIntent.BOOK_APPOINTMENT
+        elif not candidate_clinics:
             print(f"[trace:{trace_id}] [ORDINAL] Pattern detected but no candidates available.")
             state["awaiting_location"] = True
             response_data = {

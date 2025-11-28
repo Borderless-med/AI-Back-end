@@ -116,6 +116,11 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
     if booking_context.get("selected_clinic_name"):
         clinic_name = booking_context.get("selected_clinic_name")
         print(f"Preserving previously selected clinic from context: {clinic_name}")
+        # V8 FIX: Pull treatment from previous_filters if missing (context separation bug)
+        if not booking_context.get("treatment") and previous_filters.get('services'):
+            treatment_from_filters = previous_filters['services'][0]
+            booking_context["treatment"] = treatment_from_filters
+            print(f"[V8 FIX] Pulled treatment from previous_filters: {treatment_from_filters}")
     elif candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
         for word, index in pos_map.items():
