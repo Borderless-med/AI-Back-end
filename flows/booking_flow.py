@@ -112,7 +112,11 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
     print("Starting Booking Mode...")
     clinic_name = None
 
-    if candidate_clinics and len(candidate_clinics) > 0:
+    # Check if user already selected a clinic in previous turn (context preservation)
+    if booking_context.get("selected_clinic_name"):
+        clinic_name = booking_context.get("selected_clinic_name")
+        print(f"Preserving previously selected clinic from context: {clinic_name}")
+    elif candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
         for word, index in pos_map.items():
             if re.search(r'\b' + word + r'\b', latest_user_message):
@@ -136,7 +140,7 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
 
     if clinic_name:
         treatment = (previous_filters.get('services') or ["a consultation"])[0]
-        new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment}
+        new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment, "selected_clinic_name": clinic_name}
         response_text = f"Great! I can help you get started with booking. Just to confirm, are you looking to book an appointment for **{treatment}** at **{clinic_name}**?"
         return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": new_booking_context}
     else:

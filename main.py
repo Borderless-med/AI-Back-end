@@ -442,7 +442,11 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
     has_booking_context = bool(candidate_clinics or booking_context.get("status"))
     
-    if has_booking_intent and has_booking_context:
+    # If user is in active booking flow, route to booking (prevents travel FAQ hijacking)
+    if booking_context.get("status") in ["confirming_details", "gathering_info"]:
+        print(f"[trace:{trace_id}] [BOOKING] Active booking flow detected - skipping travel/semantic checks.")
+        intent = ChatIntent.BOOK_APPOINTMENT
+    elif has_booking_intent and has_booking_context:
         print(f"[trace:{trace_id}] [BOOKING] Early booking detection - overriding travel/semantic checks.")
         intent = ChatIntent.BOOK_APPOINTMENT
     elif detect_booking_intent(latest_user_message, candidate_clinics):
@@ -461,29 +465,36 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             intent = ChatIntent.BOOK_APPOINTMENT
     
     # E. Gatekeeper (Priority #5 - decision-maker when not clear from heuristics)
+    # Skip gatekeeper if we already determined intent (saves 5-8 seconds)
     if intent is None:
-        try:
-            gate_prompt = f"""
-            You are an intent gatekeeper. Classify the user's latest message into one of:
-            FIND_CLINIC, BOOK_APPOINTMENT, CANCEL_BOOKING, GENERAL_DENTAL_QUESTION, REMEMBER_SESSION, TRAVEL_FAQ, OUT_OF_SCOPE.
-            Return JSON: {{"intent": "...", "confidence": 0.0}}
-            History:
-            {query.history}
-            Latest: "{latest_user_message}"
-            """
-            resp = gatekeeper_model.generate_content(gate_prompt)
-            text = (resp.text or "").strip()
-            import json as _json
-            parsed = _json.loads(text) if text.startswith("{") else {}
-            gate_intent = parsed.get("intent")
-            gate_conf = float(parsed.get("confidence", 0))
-            gatekeeper_decision = {"intent": gate_intent, "confidence": gate_conf}
-            print(f"[trace:{trace_id}] [Gatekeeper] intent={gate_intent} conf={gate_conf:.2f}")
-            # Accept gatekeeper decision only if high confidence
-            if gate_intent in [i.value for i in ChatIntent] and gate_conf >= 0.7:
-                intent = ChatIntent(gate_intent)
-        except Exception as e:
-            print(f"[trace:{trace_id}] [Gatekeeper] error: {e}")
+        # Only run gatekeeper for truly ambiguous queries
+        should_run_gatekeeper = not (has_travel_intent or has_booking_intent or has_location_change_intent)
+        
+        if should_run_gatekeeper:
+            try:
+                gate_prompt = f"""
+                You are an intent gatekeeper. Classify the user's latest message into one of:
+                FIND_CLINIC, BOOK_APPOINTMENT, CANCEL_BOOKING, GENERAL_DENTAL_QUESTION, REMEMBER_SESSION, TRAVEL_FAQ, OUT_OF_SCOPE.
+                Return JSON: {{"intent": "...", "confidence": 0.0}}
+                History:
+                {query.history}
+                Latest: "{latest_user_message}"
+                """
+                resp = gatekeeper_model.generate_content(gate_prompt)
+                text = (resp.text or "").strip()
+                import json as _json
+                parsed = _json.loads(text) if text.startswith("{") else {}
+                gate_intent = parsed.get("intent")
+                gate_conf = float(parsed.get("confidence", 0))
+                gatekeeper_decision = {"intent": gate_intent, "confidence": gate_conf}
+                print(f"[trace:{trace_id}] [Gatekeeper] intent={gate_intent} conf={gate_conf:.2f}")
+                # Accept gatekeeper decision only if high confidence
+                if gate_intent in [i.value for i in ChatIntent] and gate_conf >= 0.7:
+                    intent = ChatIntent(gate_intent)
+            except Exception as e:
+                print(f"[trace:{trace_id}] [Gatekeeper] error: {e}")
+        else:
+            print(f"[trace:{trace_id}] [Gatekeeper] Skipped - intent already determined by heuristics.")
 
     # F. Intent Heuristics (Safety Net - Priority #6)
     if intent is None:
