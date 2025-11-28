@@ -1190,4 +1190,199 @@ elif is_frontend_fresh_start:
 **Files Modified:** main.py, TEST_EXECUTION_REPORT.md  
 **Next Step:** User validation in production
 
+---
+
+## 📉 V6 Production Testing (Nov 28, 2025 - CRITICAL REGRESSIONS)
+
+### Test Session: 13-Query Conversation Flow
+
+**Performance Scorecard:**
+- ✅ Correct Responses: 7/13 (54%) ❌ **REGRESSION from V5 (86%)**
+- ❌ Incorrect Responses: 6/13 (46%)
+- ⏱️ Avg Response Time: 9.8 seconds
+- 🎯 V6 Fixes: 2/3 working (gatekeeper skip ✅, booking context ✅), booking exit broken ❌
+
+### Query-by-Query Analysis
+
+| # | User Query | Bot Response | Response Time | Correct? | Issue |
+|---|------------|--------------|---------------|----------|-------|
+| 1 | "tell me about root canal" | Q&A explanation with disclaimer ✅ | 12.0s | ✅ | - |
+| 2 | "Find me best clinics for that?" | Location prompt ✅ | 6.7s | ✅ | - |
+| 3 | "Johor Bahru" | Service prompt ✅ | 1.2s | ✅ | - |
+| 4 | "Root canal" | 3 JB clinics shown ✅ | 20.6s | ✅ | Slow (gatekeeper ran) |
+| 5 | "Tell me more about second clinic?" | Mount Austin details ✅ | 1.3s | ✅ | - |
+| 6 | "Book and appointment" | Asks for clinic name ❌ | 4.5s | ❌ | **Context lost despite V6 fix** |
+| 7 | "Book appointment at Mount Austin Dental Hub" | Confirmation prompt ✅ | 4.5s | ✅ | - |
+| 8 | "Sorry, give me the direction there instead" | "Trouble understanding" ❌ | 11.6s | ❌ | **Stuck in booking loop** |
+| 9 | "Cancel booking. I need to know how to get there from SG." | "Trouble understanding" ❌ | 12.6s | ❌ | **Exit logic broken** |
+| 10 | "I am asking about travel direction to JB" | Re-asks confirmation ❌ | 15.4s | ❌ | **Travel FAQ blocked** |
+| 11 | "I do not want to book. I want to ask about travel direction to Mount Austin Dental hub." | "Trouble understanding" ❌ | 10.3s | ❌ | **Cannot exit** |
+| 12 | "No. I want to ask about travel direction" | Re-asks confirmation ❌ | 10.3s | ❌ | **'No' not recognized** |
+| 13 | (Not shown - session abandoned) | - | - | - | User gave up |
+
+**Average Response Time:** 9.8 seconds (target: <5s)
+
+---
+
+### Critical Issues Identified
+
+#### 🔴 **Issue 1: Booking Flow Trap (CRITICAL)**
+
+**Symptom:** User cannot exit booking confirmation, stuck in infinite loop for 6 queries
+
+**Evidence from Render Logs:**
+```
+Query #8: "Sorry, give me the direction there instead"
+→ [BOOKING] Active booking flow detected - skipping travel/semantic checks.
+→ In Booking Mode: Processing user confirmation...
+→ [AI FALLBACK] User response was not a simple yes/no.
+→ Booking Confirmation Fallback Error: AI could not determine a correction.
+
+Query #9: "Cancel booking. I need to know how to get there from SG."
+→ [BOOKING] Active booking flow detected - skipping travel/semantic checks.
+→ [AI FALLBACK] User response was not a simple yes/no.
+→ Booking Confirmation Fallback Error: AI could not determine a correction.
+
+Query #10-12: Same pattern repeats...
+```
+
+**Root Cause:**
+1. V6 added aggressive booking flow guard in `main.py` line 446:
+   ```python
+   if booking_context.get("status") in ["confirming_details", "gathering_info"]:
+       intent = ChatIntent.BOOK_APPOINTMENT  # ALWAYS forces booking
+   ```
+
+2. This **bypasses** the cancel detection logic at line 458-463:
+   ```python
+   if intent is None:  # This never executes now!
+       if booking_context.get('status') == 'confirming_details':
+           if any(x in user_reply for x in ['no', 'nope', 'cancel', ...]):
+               intent = ChatIntent.CANCEL_BOOKING
+   ```
+
+3. Result: User says "cancel", "no", "stop" → Bot ignores it, stays in booking loop
+
+**Why This Is Critical:**
+- User tried 6 different ways to exit: "sorry", "cancel booking", "I do not want to book", "No", "asking about travel"
+- Bot response every time: "Sorry, I had a little trouble understanding"
+- **0% success rate** for booking exit (100% regression from V5)
+
+---
+
+#### 🔴 **Issue 2: Travel FAQ Blocked During Booking (CRITICAL)**
+
+**Symptom:** User asks for travel directions 4 times, bot cannot route to travel FAQ
+
+**Evidence:**
+```
+Query #8: "give me the direction there instead"
+Query #9: "I need to know how to get there from SG"
+Query #10: "I am asking about travel direction to JB"
+Query #11: "I want to ask about travel direction to Mount Austin Dental hub"
+```
+
+**Root Cause:**
+V6 booking guard **prevents ALL intent routing** when `booking_context.status` is active:
+```python
+if booking_context.get("status") in ["confirming_details", "gathering_info"]:
+    intent = ChatIntent.BOOK_APPOINTMENT  # Blocks travel FAQ routing
+```
+
+**Why This Is Critical:**
+- Travel FAQ is a core feature (24% of queries in previous tests)
+- User explicitly said "travel direction" 4 times
+- Bot deaf to user intent, trapped in booking flow
+
+---
+
+#### 🔴 **Issue 3: Context Loss Despite V6 Fix (Query #6)**
+
+**Symptom:** User says "Book and appointment" after viewing clinic details → Bot asks for clinic name
+
+**Evidence:**
+```
+Query #5: "Tell me more about second clinic?" → Shows Mount Austin ✅
+Query #6: "Book and appointment" 
+Console: "candidate_pool": [], "booking_context": {}
+Render: Starting Booking Mode...
+         No positional reference found. Using AI to extract clinic name.
+         Booking Intent Extraction Failed: No clinic name found.
+```
+
+**Root Cause:**
+Frontend sent **empty** `candidate_pool: []` after user viewed clinic details. V6 fix (`selected_clinic_name` preservation) only works if backend has set it in previous turn, but:
+- Query #5 used **ordinal resolver** (not booking flow)
+- Ordinal resolver doesn't set `selected_clinic_name` in `booking_context`
+- Query #6 receives empty state from frontend
+
+**Why V6 Fix Failed:**
+The fix only preserves context **within** booking flow stages, not **between** clinic browsing and booking initiation.
+
+---
+
+### V5 vs V6 Comparison
+
+| Metric | V5 (Previous) | V6 (Current) | Change |
+|--------|---------------|--------------|--------|
+| **Accuracy** | 86% (12/14) | 54% (7/13) | ❌ **-37% REGRESSION** |
+| **Booking Success** | 50% (1/2) | 0% (0/1) | ❌ **-50% REGRESSION** |
+| **Booking Exit** | 100% | 0% | ❌ **CRITICAL FAILURE** |
+| **Travel FAQ** | 100% | 0% | ❌ **CRITICAL FAILURE** |
+| **Response Time** | 10.0s avg | 9.8s avg | ✅ **+2% faster** (marginal) |
+| **Gatekeeper Skip** | 0% | 75%+ | ✅ **Working as designed** |
+
+---
+
+### What Worked in V6
+
+✅ **Gatekeeper Optimization (Partial Success)**
+- Query #3 "Johor Bahru": 1.2s (down from 6-8s)
+- Query #5 "second clinic": 1.3s (down from 10s)
+- Query #7 "Book appointment": 4.5s (down from 10s)
+- **Result:** 50-80% response time reduction for simple queries
+
+✅ **Context Preservation (Limited Success)**
+- Query #10: "Preserving previously selected clinic from context: Mount AUstin Dental Hub"
+- **But:** Only works within booking flow, not across intent boundaries
+
+---
+
+### What Failed in V6
+
+❌ **Booking Flow Guard Too Aggressive**
+- **Design Intent:** Force booking intent when already in booking flow
+- **Implementation Flaw:** Bypasses ALL exit logic (cancel, no, stop)
+- **Impact:** 100% failure rate for booking exit
+
+❌ **Travel FAQ Routing Blocked**
+- **Design Intent:** Prevent travel FAQ from hijacking booking
+- **Implementation Flaw:** Prevents travel FAQ even when explicitly requested
+- **Impact:** User asked 4 times, 0% success rate
+
+❌ **Context Preservation Incomplete**
+- **Design Intent:** Remember clinic when user says "Book appointment"
+- **Implementation Gap:** Doesn't bridge clinic browsing → booking transition
+- **Impact:** Still loses context on first booking attempt
+
+---
+
+### V6 Failure Summary
+
+**Critical Bugs Introduced:**
+1. Booking exit impossible (6 consecutive failures)
+2. Travel FAQ unreachable during booking (4 consecutive failures)
+3. Context loss still occurs at booking initiation
+
+**Accuracy Regression:**
+- V5: 86% correct → V6: 54% correct
+- **Net regression: -32 percentage points**
+
+**User Experience Impact:**
+- Session abandoned after 12 queries (user gave up)
+- Bot appears "stuck" and "not listening"
+- Worse than V5 in every metric except response time
+
+---
+
 

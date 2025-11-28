@@ -406,11 +406,14 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             if ordinal_clinic:
                 state["selected_clinic_id"] = ordinal_clinic.get("id")
                 print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
+                # Store clinic name in booking context for later booking initiation
+                updated_booking_context = booking_context.copy()
+                updated_booking_context["selected_clinic_name"] = ordinal_clinic.get('name')
                 response_data = {
                     "response": f"**{ordinal_clinic.get('name')}**\n\nAddress: {ordinal_clinic.get('address')}\nRating: {ordinal_clinic.get('rating')} ({ordinal_clinic.get('reviews')} reviews)\nHours: {ordinal_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
                     "applied_filters": previous_filters,
                     "candidate_pool": candidate_clinics,
-                    "booking_context": booking_context,
+                    "booking_context": updated_booking_context,
                     "meta": {"type": "clinic_detail", "clinic": ordinal_clinic}
                 }
                 updated_history = [msg.model_dump() for msg in query.history]
@@ -442,10 +445,24 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
     has_booking_context = bool(candidate_clinics or booking_context.get("status"))
     
-    # If user is in active booking flow, route to booking (prevents travel FAQ hijacking)
+    # If user is in active booking flow, check for exit keywords FIRST
     if booking_context.get("status") in ["confirming_details", "gathering_info"]:
-        print(f"[trace:{trace_id}] [BOOKING] Active booking flow detected - skipping travel/semantic checks.")
-        intent = ChatIntent.BOOK_APPOINTMENT
+        # Check if user wants to cancel/exit booking
+        cancel_keywords = ["cancel", "stop", "quit", "exit", "no", "nope", "don't want", "do not want"]
+        travel_keywords = ["direction", "travel", "get there", "how to go", "how do i get"]
+        
+        has_cancel_intent = any(kw in lower_msg for kw in cancel_keywords)
+        has_travel_intent_in_booking = any(kw in lower_msg for kw in travel_keywords)
+        
+        if has_cancel_intent and not has_booking_intent:
+            print(f"[trace:{trace_id}] [BOOKING] User wants to cancel - clearing booking context.")
+            intent = ChatIntent.CANCEL_BOOKING
+        elif has_travel_intent_in_booking:
+            print(f"[trace:{trace_id}] [BOOKING] User asking for travel directions - routing to travel FAQ.")
+            intent = ChatIntent.TRAVEL_FAQ
+        else:
+            print(f"[trace:{trace_id}] [BOOKING] Active booking flow detected - continuing booking.")
+            intent = ChatIntent.BOOK_APPOINTMENT
     elif has_booking_intent and has_booking_context:
         print(f"[trace:{trace_id}] [BOOKING] Early booking detection - overriding travel/semantic checks.")
         intent = ChatIntent.BOOK_APPOINTMENT

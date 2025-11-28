@@ -65,7 +65,7 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         # --- START: DETERMINISTIC CHECK ---
         user_reply = latest_user_message.strip().lower()
         affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
-        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right']
+        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right', 'quit', 'exit', "don't want", 'do not want', 'never mind', 'nevermind']
 
         if user_reply in affirmative_responses:
             print("[DETERMINISTIC] User confirmed. Moving to gathering_info.")
