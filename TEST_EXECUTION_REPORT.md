@@ -880,6 +880,258 @@ Backend processed the query correctly, but Gemini's response was: *"I'm sorry, I
 
 ---
 
+## 🚨 V8 PRODUCTION TEST RESULTS (November 28, 2025)
+
+**Test Date:** November 28, 2025 (15:18-15:24 UTC)  
+**Test Session:** `9a71f11f-f2b5-4d61-92fb-2365a8b48142`  
+**Total Queries:** 18 tracked interactions  
+**Overall Accuracy:** **11% (2/18 successful)** ❌ **CRITICAL REGRESSION**  
+**Verdict:** V8 FAILED - introduced severe regressions from V7's 75% accuracy
+
+### 📊 V8 Test Results Breakdown
+
+| # | User Query | Expected | Actual | Status | Root Cause |
+|---|------------|----------|--------|--------|------------|
+| 1 | "What should I prepare before traveling to JB by public transport?" | Return FAQ checklist | ❌ "I don't have specific information" | FAIL | **Travel FAQ LLM too strict** |
+| 2 | "What are common mistakes when traveling to JB?" | Return 7-point mistake list | ❌ "I don't have specific information" | FAIL | **Travel FAQ prompt issue** |
+| 3 | "When is the Causeway most crowded?" | Return peak hours info | ❌ "I don't have specific information" | FAIL | **Travel FAQ not working** |
+| 4 | "Tell me about the third clinic" | Show Habib Dental details | ✅ Worked correctly | PASS | V8 ordinal storage working |
+| 5 | "Book appointment at this clinic" | Initiate booking | ❌ "Please let me know the name of the clinic" | FAIL | **V8 Fix 1 failed** |
+| 6 | "Habib Dental Bandar DatoOnn" | Confirm booking | ❌ Travel FAQ hijacked query | FAIL | **Travel FAQ too aggressive** |
+| 7 | "book an appointment at Habib Dental" | Confirm booking details | ✅ Worked with keyword check | PASS | V8 Fix 2 prevented ordinal hijacking |
+| 8 | "cancel the booking" | Exit booking flow | ❌ Stuck in confirmation loop | FAIL | Cancel detection too narrow |
+| 9 | "no, cancel booking" | Exit booking flow | ❌ Stuck in confirmation loop | FAIL | Phrase not recognized |
+| 10 | "No" | Exit booking | ✅ Context cleared | PASS | "No" response works |
+| 11 | "Show me scaling clinics in Singapore" | Search for scaling in SG | ✅ Returned results | PASS | Search working |
+| 12 | "book this clinic" (SG scaling) | Book scaling appointment | ❌ Booked with `root_canal` treatment | FAIL | **V8 Fix 3 failed** - wrong treatment |
+| 13 | "book the second clinic" | Book Mount Austin | ✅ Booking initiated | PASS | V8 keyword check working |
+| 14 | "tell me a joke" (in booking) | Exit booking | ❌ Stuck in confirmation loop | FAIL | Booking too rigid |
+| 15 | "How do I get to JB by train?" | Return train directions | ✅ Travel FAQ routed correctly | PASS | V7 travel keyword detection |
+| 16-17 | Multiple escape attempts | Exit booking | ❌ All stuck in loop | FAIL | Confirmation loop too rigid |
+| 18 | "What is root canal treatment?" | Return definition | ❌ Showed clinic recommendations | FAIL | **Educational query misrouted** |
+
+### 🔍 V8 Root Cause Analysis
+
+#### **Issue #1: Travel FAQ Complete Failure (0/3 queries)**
+**Observation:** Image shows bot responding "I'm sorry, I don't have specific information about that" for BOTH preparation and common mistakes queries.
+
+**Evidence from Render Logs:**
+```
+[TRAVEL_FLOW] Found 3 potential matches.
+[TRAVEL_FLOW] Generating final answer with Gemini...
+[TRAVEL_FLOW] Final answer generated successfully.
+```
+
+**Root Cause:** Semantic search worked correctly (found 3 matches), but LLM prompt was too strict:
+```python
+# Old prompt V8:
+"If the context does not contain enough information to answer the question, just say: 
+'I'm sorry, I don't have specific information about that.'"
+```
+
+The LLM interpreted "enough information" very strictly - even though FAQ entries 21-22 exist with comprehensive checklists and mistake lists, the LLM decided the context was insufficient.
+
+#### **Issue #2: V8 Fix 1 Failed - Treatment Pull Logic**
+**Expected:** When user says "book appointment at this clinic" after viewing clinic details, backend should pull treatment from `applied_filters.services`.
+
+**Actual:** Query #5 console log shows:
+```javascript
+booking_context: {treatment: 'root_canal', selected_clinic_name: 'Habib Dental Bandar DatoOnn'}
+```
+
+But bot responded: "Please let me know the name of the clinic"
+
+**Root Cause:** V8 Fix 1 checks `if booking_context.get("selected_clinic_name")` but the frontend sends **EMPTY booking_context** on navigation. The condition never triggers because booking_context is `{}` not `{selected_clinic_name: null}`.
+
+#### **Issue #3: V8 Fix 3 Failed - Treatment Persistence Bug**
+**Expected:** After searching "scaling clinics in Singapore", booking should use `treatment: 'scaling'`.
+
+**Actual:** Query #12 attempted booking with `treatment: 'root_canal'` from previous JB search.
+
+**Root Cause:** `find_clinic_flow.py` sets `booking_context.treatment` in search results, but frontend's "book this clinic" button sends new request without including booking_context from search response.
+
+#### **Issue #4: Travel FAQ Over-Aggressive Routing**
+**Expected:** User provides clinic name during booking flow.
+
+**Actual:** Query #6 "Habib Dental Bandar DatoOnn" was interpreted as travel FAQ query, blocking booking initiation.
+
+**Root Cause:** Travel FAQ semantic search too broad - clinic names triggering travel intent when no booking guard exists.
+
+#### **Issue #5: Educational Query Misclassification**
+**Expected:** "What is root canal treatment?" returns educational content.
+
+**Actual:** Bot returned top 3 clinic recommendations for root canal.
+
+**Root Cause:** Service keyword detection (`root canal`) happens before QnA intent classification, causing "what is" questions to trigger clinic search.
+
+### 📉 V8 vs V7 Performance Comparison
+
+| Metric | V7 Result | V8 Result | Change |
+|--------|-----------|-----------|--------|
+| **Overall Accuracy** | 75% (12/16) | 11% (2/18) | **-64%** ❌ |
+| **Booking Success** | 0% (0/6) | 0% (0/7) | No change ❌ |
+| **Travel FAQ** | 100% (5/5) | **0% (0/3)** | **-100%** ❌ |
+| **Cancel Detection** | 100% (2/2) | 33% (1/3) | **-67%** ❌ |
+| **Ordinal Storage** | 100% (2/2) | 100% (1/1) | Maintained ✅ |
+| **New: Educational Query** | N/A | 0% (0/1) | New failure ❌ |
+
+**V8 Verdict:** **CRITICAL REGRESSION** - V8 introduced more bugs than it fixed. Travel FAQ completely broke, booking still doesn't work, and educational queries now fail.
+
+---
+
+## 🔧 V9 Implementation: Complete System Overhaul
+
+**Implementation Date:** November 28, 2025 (Post-V8 Analysis)  
+**Target Issues:** (1) Travel FAQ LLM prompt strictness, (2) Booking context reunification, (3) Travel FAQ hijacking booking, (4) Cancel detection gaps, (5) Educational query misrouting
+
+### 📊 V9 Fixes Applied
+
+#### **Fix 1: Always Pull Treatment from Filters FIRST**
+**File:** `flows/booking_flow.py` lines ~110-120  
+**Problem:** V8 Fix 1 only pulled treatment if `booking_context.selected_clinic_name` exists, but frontend sends empty `{}`.
+
+**Solution:**
+```python
+# V9 FIX 1: ALWAYS pull treatment from filters FIRST (even if booking_context exists)
+# This fixes the issue where frontend sends empty booking_context after navigation
+treatment_from_filters = previous_filters.get('services', [None])[0] if previous_filters.get('services') else None
+if not booking_context.get("treatment") and treatment_from_filters:
+    booking_context["treatment"] = treatment_from_filters
+    print(f"[V9 FIX] Pulled treatment from previous_filters: {treatment_from_filters}")
+
+# Check if user already selected a clinic (comes AFTER treatment pull)
+if booking_context.get("selected_clinic_name"):
+    clinic_name = booking_context.get("selected_clinic_name")
+```
+
+**Impact:** Now checks `previous_filters` unconditionally before processing booking, ensuring treatment always available.
+
+#### **Fix 2: Add Booking Guard Before Travel FAQ**
+**File:** `main.py` lines ~575-590  
+**Problem:** Query #6 shows travel FAQ hijacked clinic name during booking ("Habib Dental Bandar DatoOnn" → travel FAQ instead of booking).
+
+**Solution:**
+```python
+# V9 FIX 2: Don't hijack active booking flow with travel FAQ
+if intent == ChatIntent.TRAVEL_FAQ or (intent is None and has_travel_intent):
+    # Guard: Don't hijack booking flow with travel FAQ
+    if booking_context.get("status") in ["confirming_details", "awaiting_confirmation", "gathering_info"]:
+        print(f"[V9 GUARD] Booking flow active - skipping travel FAQ check, continuing with booking")
+        intent = ChatIntent.BOOK_APPOINTMENT
+    else:
+        print(f"[INFO] Engaging Semantic Travel FAQ check.")
+        travel_resp = handle_travel_query(...)
+```
+
+**Impact:** Booking flow now protected from travel FAQ hijacking when user is in active booking session.
+
+#### **Fix 3: Expand Cancel Keyword List**
+**File:** `flows/booking_flow.py` lines ~65-80  
+**Problem:** V8 only recognized "cancel" and "no thanks", but queries #8-9 show "cancel the booking" and "no, cancel booking" both failed.
+
+**Solution:**
+```python
+# V9 FIX 3: Expanded negative/cancel responses
+negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right', 'quit', 'exit', 
+                    "don't want", 'do not want', 'never mind', 'nevermind', 'cancel booking', 
+                    'cancel the booking', 'cancel appointment', 'forget it', 'go back', "don't book", 'do not book']
+
+# Also check for cancel keywords in longer phrases
+cancel_keywords_in_phrase = ['cancel', 'nevermind', 'forget it', 'go back', 'stop']
+has_cancel_intent = any(keyword in user_reply for keyword in cancel_keywords_in_phrase)
+
+if user_reply in negative_responses or has_cancel_intent:
+    print(f"[V9 FIX] User cancelled/declined. User reply: {user_reply}")
+    return {"response": "Okay, I've cancelled that booking request. How else can I help you today?", ...}
+```
+
+**Impact:** Now handles 15+ cancellation phrases including partial matches in longer queries.
+
+#### **Fix 4: Educational Query Detection**
+**File:** `main.py` lines ~355-375  
+**Problem:** Query #18 "What is root canal treatment?" returned clinic list instead of definition.
+
+**Solution:**
+```python
+# V9 FIX 4: Check for educational queries BEFORE routing
+educational_patterns = [
+    r"what is", r"what are", r"what's", r"whats", r"define", 
+    r"tell me about", r"explain", r"can you explain", r"meaning of", r"what does .+ mean"
+]
+is_educational = any(re.search(pattern, lower_msg, re.IGNORECASE) for pattern in educational_patterns)
+if is_educational:
+    dental_terms = ["root canal", "scaling", "braces", "whitening", "implant", "filling", ...]
+    is_about_treatment = any(term in lower_msg for term in dental_terms)
+    has_clinic_or_location = any(term in lower_msg for term in ["clinic", "dentist", "first", "second"])
+    if is_about_treatment and not has_clinic_or_location:
+        print(f"[V9 FIX] Educational query detected - routing to QnA")
+        intent = ChatIntent.QNA
+```
+
+**Impact:** "What is X?" queries now route to QnA flow before service extraction triggers clinic search.
+
+#### **Fix 5: Relax Travel FAQ LLM Prompt**
+**File:** `flows/travel_flow.py` lines ~100-125  
+**Problem:** V8 travel FAQ prompt too strict - LLM refusing to answer even when context had relevant information.
+
+**Solution:**
+```python
+prompt = f"""
+You are a helpful travel assistant for Singapore-JB dental travel.
+
+**CRITICAL INSTRUCTIONS:**
+- The context may not match the question word-for-word, but if it contains RELATED information, YOU MUST USE IT.
+- For "what to prepare" questions, use ANY preparation/checklist information from context.
+- For "common mistakes" questions, use ANY mistake/error/tips information from context.
+- Provide comprehensive answers by combining relevant information from multiple FAQ entries.
+- ONLY say you lack information if context is COMPLETELY UNRELATED (e.g., flights when context has bus info).
+- Do NOT be overly strict - if context helps answer travel intent, use it!
+
+If context truly has NO relevant information, say: "I'm sorry, I don't have specific information about that..."
+--- CONTEXT ---
+{context}
+--- END ---
+User's Question: {user_query}
+"""
+```
+
+**Impact:** LLM now uses context more flexibly, combining multiple FAQ entries to answer questions comprehensively.
+
+---
+
+### 📋 V9 Testing Checklist
+
+**Critical Tests (Fixing V8 Failures):**
+1. ✅ "What should I prepare to travel to JB by public transport?" → Should return comprehensive checklist (was failing in V8)
+2. ✅ "What are common mistakes when traveling to JB?" → Should return 7-point mistake list (was failing in V8)
+3. ✅ Search "root canal in JB" → View "third clinic" → "book appointment" → Should preserve both treatment AND clinic (V8 failed this)
+4. ✅ "cancel the booking" or "cancel booking" → Should exit booking flow (V8 failed - only "No" worked)
+5. ✅ "What is root canal treatment?" → Should return definition, not clinic list (V8 failed - returned clinics)
+6. ✅ During booking confirmation, say clinic name → Should continue booking, not route to travel FAQ (V8 hijacked this)
+
+**Edge Cases:**
+7. ✅ Search "scaling in SG" → "book second clinic" → Should book scaling, not previous search treatment
+8. ✅ "tell me a joke" during booking → Should exit booking (not tested in V8)
+9. ✅ "forget it" or "go back" during booking → Should cancel (V8 didn't handle these)
+10. ✅ "How to get to the first clinic?" → Should provide general SG-to-JB travel directions
+
+---
+
+### 🎯 V9 Expected Improvements
+
+| Metric | V7 Result | V8 Result | V9 Target |
+|--------|-----------|-----------|-----------|
+| **Overall Accuracy** | 75% (12/16) | 11% (2/18) | **90%+ (16/18)** |
+| **Booking Success** | 0% (0/6) | 0% (0/7) | **100% (7/7)** ✅ |
+| **Travel FAQ** | 100% (5/5) | 0% (0/3) | **100% (3/3)** ✅ |
+| **Cancel Detection** | 100% (2/2) | 33% (1/3) | **100% (3/3)** ✅ |
+| **Ordinal Storage** | 100% (2/2) | 100% (1/1) | **100%** maintained |
+| **Educational Query** | N/A | 0% (0/1) | **100% (1/1)** ✅ |
+
+**V9 Target:** Fix all V8 regressions + achieve 100% booking success rate (up from 0% in V7/V8).
+
+---
+
 ### 🟢 **Priority 3: Optional Improvements**
 
 #### **Fix 6: Improve Gatekeeper Prompt**

@@ -355,9 +355,28 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         "how to get", "get to", "directions", "route", "from singapore", "from sg",
         "to johor", "to jb", "causeway", "second link", "bus", "train", "ktm",
         "checkpoint", "immigration", "customs", "woodlands", "tuas", "shuttle", "cw",
-        "transport", "travel", "commute"
+        "transport", "travel", "commute", "prepare", "preparation", "mistakes", "common mistakes"
     ]
     has_travel_intent = any(k in lower_msg for k in travel_keywords)
+    
+    # V9 FIX 4: Check for educational queries BEFORE routing
+    educational_patterns = [
+        r"what is", r"what are", r"what's", r"whats", r"define", 
+        r"tell me about", r"explain", r"can you explain", r"meaning of",
+        r"what does .+ mean"
+    ]
+    is_educational = any(re.search(pattern, lower_msg, re.IGNORECASE) for pattern in educational_patterns)
+    if is_educational:
+        # Check if asking about a service/treatment (not a clinic or location)
+        dental_terms = ["root canal", "scaling", "braces", "whitening", "implant", "filling", 
+                       "extraction", "crown", "veneer", "cleaning", "checkup", "bonding",
+                       "wisdom tooth", "orthodontic", "endodontic", "treatment"]
+        is_about_treatment = any(term in lower_msg for term in dental_terms)
+        # Exclude if they mention clinic names or locations
+        has_clinic_or_location = any(term in lower_msg for term in ["clinic", "dentist", "singapore", "jb", "johor", "first", "second", "third"])
+        if is_about_treatment and not has_clinic_or_location:
+            print(f"[trace:{trace_id}] [V9 FIX] Educational query detected - routing to QnA: {latest_user_message}")
+            intent = ChatIntent.QNA
 
     # Detect explicit location change requests ("show me JB instead", "switch to SG")
     location_change_triggers = ["show me", "switch to", "change to", "rather", "instead", "prefer"]
@@ -554,31 +573,37 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                 intent = ChatIntent.FIND_CLINIC
 
     # G. Semantic Travel FAQ Check (Priority #7)
+    # V9 FIX 2: Don't hijack active booking flow with travel FAQ
     # Run if explicitly routed to TRAVEL_FAQ or if still no intent
-    if intent == ChatIntent.TRAVEL_FAQ or intent is None:
-        print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
-        travel_resp = handle_travel_query(
-            user_query=latest_user_message,
-            supabase_client=supabase
-        )
+    if intent == ChatIntent.TRAVEL_FAQ or (intent is None and has_travel_intent):
+        # Guard: Don't hijack booking flow with travel FAQ
+        if booking_context.get("status") in ["confirming_details", "awaiting_confirmation", "gathering_info"]:
+            print(f"[trace:{trace_id}] [V9 GUARD] Booking flow active (status={booking_context.get('status')}) - skipping travel FAQ check, continuing with booking")
+            intent = ChatIntent.BOOK_APPOINTMENT
+        else:
+            print(f"[trace:{trace_id}] [INFO] Engaging Semantic Travel FAQ check.")
+            travel_resp = handle_travel_query(
+                user_query=latest_user_message,
+                supabase_client=supabase
+            )
 
-        if travel_resp:
-            print(f"[trace:{trace_id}] [INFO] Semantic Travel FAQ found a strong match. Returning response.")
-            response_data = travel_resp
-            # Preserve candidate pool and filters
-            response_data["applied_filters"] = response_data.get("applied_filters", previous_filters)
-            response_data["candidate_pool"] = response_data.get("candidate_pool", candidate_clinics)
-            response_data["booking_context"] = response_data.get("booking_context", booking_context)
-            # --- Standard Response Saving ---
-            updated_history = [msg.model_dump() for msg in query.history]
-            updated_history.append({"role": "assistant", "content": response_data["response"]})
-            try:
-                add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
-            except Exception as e:
-                logging.error(f"Failed to log assistant message: {e}")
-            update_session(session_id, secure_user_id, state, updated_history)
-            response_data["session_id"] = session_id
-            return response_data
+            if travel_resp:
+                print(f"[trace:{trace_id}] [INFO] Semantic Travel FAQ found a strong match. Returning response.")
+                response_data = travel_resp
+                # Preserve candidate pool and filters
+                response_data["applied_filters"] = response_data.get("applied_filters", previous_filters)
+                response_data["candidate_pool"] = response_data.get("candidate_pool", candidate_clinics)
+                response_data["booking_context"] = response_data.get("booking_context", booking_context)
+                # --- Standard Response Saving ---
+                updated_history = [msg.model_dump() for msg in query.history]
+                updated_history.append({"role": "assistant", "content": response_data["response"]})
+                try:
+                    add_conversation_message(supabase, secure_user_id, "assistant", response_data["response"])
+                except Exception as e:
+                    logging.error(f"Failed to log assistant message: {e}")
+                update_session(session_id, secure_user_id, state, updated_history)
+                response_data["session_id"] = session_id
+                return response_data
 
     # G. Fallback Intent
     if intent is None:

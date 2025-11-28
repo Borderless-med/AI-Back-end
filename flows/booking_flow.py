@@ -65,7 +65,14 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         # --- START: DETERMINISTIC CHECK ---
         user_reply = latest_user_message.strip().lower()
         affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
-        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right', 'quit', 'exit', "don't want", 'do not want', 'never mind', 'nevermind']
+        # V9 FIX 3: Expanded negative/cancel responses to include common phrases
+        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right', 'quit', 'exit', 
+                            "don't want", 'do not want', 'never mind', 'nevermind', 'cancel booking', 
+                            'cancel the booking', 'cancel appointment', 'forget it', 'go back', "don't book", 'do not book']
+        
+        # V9 FIX 3: Also check for cancel keywords in longer phrases
+        cancel_keywords_in_phrase = ['cancel', 'nevermind', 'forget it', 'go back', 'stop']
+        has_cancel_intent = any(keyword in user_reply for keyword in cancel_keywords_in_phrase)
 
         if user_reply in affirmative_responses:
             print("[DETERMINISTIC] User confirmed. Moving to gathering_info.")
@@ -73,10 +80,10 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
             response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
             return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
         
-        if user_reply in negative_responses:
-            print("[DETERMINISTIC] User cancelled. Resetting flow.")
-            response_text = "My apologies. Let's start over. What can I help you with?"
-            return {"response": response_text, "applied_filters": {}, "candidate_pool": [], "booking_context": {}}
+        if user_reply in negative_responses or has_cancel_intent:
+            print(f"[V9 FIX] User cancelled/declined. Resetting flow. User reply: {user_reply}")
+            response_text = "Okay, I've cancelled that booking request. How else can I help you today?"
+            return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
         # --- END: DETERMINISTIC CHECK ---
 
         # --- FALLBACK: If not a simple yes/no, let the AI try to figure out corrections ---
@@ -112,15 +119,17 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
     print("Starting Booking Mode...")
     clinic_name = None
 
+    # V9 FIX 1: ALWAYS pull treatment from filters FIRST (even if booking_context exists)
+    # This fixes the issue where frontend sends empty booking_context after navigation
+    treatment_from_filters = previous_filters.get('services', [None])[0] if previous_filters.get('services') else None
+    if not booking_context.get("treatment") and treatment_from_filters:
+        booking_context["treatment"] = treatment_from_filters
+        print(f"[V9 FIX] Pulled treatment from previous_filters: {treatment_from_filters}")
+
     # Check if user already selected a clinic in previous turn (context preservation)
     if booking_context.get("selected_clinic_name"):
         clinic_name = booking_context.get("selected_clinic_name")
         print(f"Preserving previously selected clinic from context: {clinic_name}")
-        # V8 FIX: Pull treatment from previous_filters if missing (context separation bug)
-        if not booking_context.get("treatment") and previous_filters.get('services'):
-            treatment_from_filters = previous_filters['services'][0]
-            booking_context["treatment"] = treatment_from_filters
-            print(f"[V8 FIX] Pulled treatment from previous_filters: {treatment_from_filters}")
     elif candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
         for word, index in pos_map.items():
