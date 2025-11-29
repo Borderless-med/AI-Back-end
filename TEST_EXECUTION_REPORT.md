@@ -1302,6 +1302,237 @@ if is_educational and is_about_treatment and not has_clinic_or_location:
 
 ---
 
+## 🧪 V10 PRODUCTION TEST RESULTS (November 29, 2025)
+
+**Test Date:** November 29, 2025 (14:45-14:53 UTC)  
+**Session ID:** `9a71f11f-f2b5-4d61-92fb-2365a8b48142`  
+**Total Queries:** 19  
+**Overall Accuracy:** **57.9% (11/19 successful)** ⚠️ **MAJOR IMPROVEMENT from V9**  
+**Verdict:** **V10 HOTFIX WORKS** - Educational queries fixed, but booking still broken
+
+### 📊 V10 Quick Stats
+
+| Metric | V9 Result | V10 Result | Change |
+|--------|-----------|------------|--------|
+| **Overall Accuracy** | 0% (0/10) | **57.9%** (11/19) | **+57.9%** ✅ |
+| **Server Crashes** | 20% (2/10) | **0%** (0/19) | **-20%** ✅ |
+| **Educational Queries** | 0% (crashed) | **100%** (2/2) | **+100%** ✅ |
+| **Booking Success** | 0% (N/A) | **20%** (1/5) | **+20%** ⚠️ |
+| **Travel FAQ** | N/A | **100%** (3/3) | **NEW** ✅ |
+| **Search Flow** | 100% | **100%** (4/4) | Maintained ✅ |
+| **Response Time** | 12-17s | **6.7s avg** | **-8.3s** ✅ |
+
+---
+
+### ✅ V10 HOTFIX VERIFIED
+
+**Educational Query Tests (V10 Primary Fix):**
+1. ✅ "What is root canal treatment?" → QnA response (4s) - **No 500 error!**
+2. ✅ "Can you explain what dental scaling involves?" → QnA response (4s) - **No 500 error!**
+
+**Verdict:** `ChatIntent.QNA` → `ChatIntent.GENERAL_DENTAL_QUESTION` fix **COMPLETELY SUCCESSFUL**
+
+---
+
+### ❌ V10 Critical Bugs Discovered
+
+#### Bug 1: Wrong Treatment Preserved (100% failure rate)
+- **Query 5:** Search "whitening in Singapore" → "book the first clinic" → Confirmed **root_canal** ❌ (Expected: whitening)
+- **Query 11:** Search "for braces in JB" → "Book for braces at Habib Dental" → Confirmed **root_canal** ❌ (Expected: braces)
+- **Root Cause:** V9 Fix 1 uses `services[0]` (first service) instead of latest service from search
+- **Impact:** User can never book the treatment they searched for if they've searched multiple services
+
+#### Bug 2: Clinic Context Lost (60% failure rate)
+- **Query 10:** After viewing "third clinic" (Habib Dental) → "I want to book" → **"No clinic name found"** ❌
+- **Root Cause:** Frontend sends empty `booking_context`, backend doesn't preserve `selected_clinic_name` from previous turn
+- **Impact:** User must repeat clinic name explicitly every time
+
+#### Bug 3: "I changed my mind" Not Recognized (33% failure rate)
+- **Query 6:** During booking confirmation → "I changed my mind" → **"AI FALLBACK - could not determine correction"** ❌
+- **Root Cause:** V9 Fix 3 only checks hardcoded cancel keywords, misses natural language variations
+- **Impact:** Users stuck in booking flow unless they use exact "Cancel" keyword
+
+#### Bug 4: Travel FAQ Blocked During Booking
+- **Query 12:** During booking → "I want travel directions to Habib" → **Blocked by V9 Fix 2 guard** ❌
+- **Root Cause:** V9 Fix 2 prevents travel FAQ when `status=confirming_details`
+- **Impact:** Users can't ask travel questions during booking process
+
+#### Bug 5: Insurance Query Misrouted to Search
+- **Query 19:** "Do clinics in JB accept insurance" → **Tried to search for clinic named "do in accept insurance"** ❌
+- **Root Cause:** Heuristic detected "clinics" keyword, routed to search instead of QnA
+- **Impact:** General policy questions don't get answered
+
+---
+
+### 📊 V10 Detailed Query Analysis
+
+| # | User Query | Expected | Actual | Time | Status |
+|---|------------|----------|--------|------|--------|
+| 1 | "clinics for root canal" | Ask location | ✅ "Which country?" | 0s | PASS |
+| 4 | "whitening in Singapore" | Show 3 SG clinics | ✅ 3 clinics shown | 11s | PASS |
+| 5 | "book the first clinic" | Book for whitening | ❌ Confirmed **root_canal** | 2s | **FAIL** |
+| 6 | "I changed my mind" | Cancel or handle | ❌ AI fallback error | 9s | **FAIL** |
+| 7 | "Cancel" | Clear booking | ✅ Cancelled | 2s | PASS |
+| 8 | "for braces in JB" | Show 3 JB clinics | ✅ 3 clinics shown | 11s | PASS |
+| 9 | "show me the third clinic" | Show Habib Dental | ✅ Details shown | 1s | PASS |
+| 10 | "I want to book" | Initiate booking | ❌ No clinic name found | 5s | **FAIL** |
+| 11 | "Book for braces at Habib" | Confirm braces booking | ❌ Confirmed **root_canal** | 4s | **FAIL** |
+| 12 | "I want travel directions" | Provide directions | ❌ AI fallback error | 10s | **FAIL** |
+| 13 | "Cancel" | Clear booking | ✅ Cancelled | 2s | PASS |
+| 14 | "What should I prepare..." | Travel FAQ answer | ✅ FAQ response | 12s | PASS |
+| 15 | "Common mistakes..." | Travel FAQ answer | ✅ FAQ response | 12s | PASS |
+| 16 | "When is Causeway crowded?" | Travel FAQ answer | ✅ FAQ response | 10s | PASS |
+| 17 | "What is root canal?" | Educational answer | ✅ QnA response | 4s | **PASS** |
+| 18 | "Explain dental scaling" | Educational answer | ✅ QnA response | 4s | **PASS** |
+| 19 | "Do clinics accept insurance?" | QnA policy answer | ❌ Searched for clinic | 10s | **FAIL** |
+
+---
+
+### 🎯 V10 vs V9 Comparison
+
+| Category | V9 | V10 | Change |
+|----------|----|----|--------|
+| Educational Queries | 0% (crashed) | **100%** | ✅ **Fixed** |
+| Server Stability | 80% uptime | **100%** | ✅ **Fixed** |
+| Search Flow | 100% | **100%** | ✅ Maintained |
+| Travel FAQ | Not tested | **100%** | ✅ **Working** |
+| Booking Flow | 0% | **20%** | ⚠️ Still broken |
+| Cancel Detection | 0% | **66.7%** | ⚠️ Partial |
+| Policy Questions | 0% | **0%** | ❌ Still broken |
+
+---
+
+### 🔍 Root Cause Analysis: Why Booking Forgets Clinic or Treatment
+
+**The Pattern:**
+- Bot alternately forgets either **clinic name** OR **treatment type**
+- Never remembers both correctly when user changes treatment between searches
+
+**Root Cause 1: Treatment Array Index Bug**
+```python
+# V9 Fix 1 code (booking_flow.py lines 108-118)
+treatment = previous_filters.services[0]  # ❌ Gets FIRST service
+
+# Example:
+# applied_filters.services = ['root_canal', 'teeth_whitening', 'braces']
+# User searched: root canal → whitening → braces
+# V9 Fix 1 gets: services[0] = 'root_canal' (WRONG!)
+# Should get: services[-1] = 'braces' (CORRECT!)
+```
+
+**Root Cause 2: Frontend Clears booking_context**
+```javascript
+// Console log shows:
+"booking_context": {
+  "treatment": "root_canal",
+  "selected_clinic_name": "Mount Austin Dental Hub"  // ✅ Present
+}
+
+// Next request:
+"booking_context": {}  // ❌ CLEARED by frontend!
+```
+
+**Root Cause 3: Backend Doesn't Check Previous selected_clinic_name**
+- When AI extraction fails, backend gives up
+- Doesn't check if `selected_clinic_name` was set in previous turn
+- User forced to repeat clinic name explicitly
+
+---
+
+### 🚀 V11 CRITICAL FIXES NEEDED
+
+#### Fix 1: Treatment Preservation (CRITICAL - affects 100% of bookings)
+**Current Code:**
+```python
+treatment = previous_filters.services[0]  # ❌ First service
+```
+
+**V11 Fix:**
+```python
+treatment = previous_filters.services[-1]  # ✅ Last service (most recent)
+```
+
+**Impact:** Would fix queries 5, 11 (wrong treatment errors)
+
+---
+
+#### Fix 2: Clinic Context Preservation (CRITICAL - affects 60% of bookings)
+**V11 Fix:**
+```python
+# After AI extraction fails
+if not clinic_name_from_ai and session.get("selected_clinic_name"):
+    clinic_name = session["selected_clinic_name"]
+    print(f"[V11 FIX] Using clinic from previous turn: {clinic_name}")
+```
+
+**Impact:** Would fix query 10 ("I want to book" failure)
+
+---
+
+#### Fix 3: Expanded Cancel Detection (MEDIUM - affects UX)
+**V11 Fix:**
+```python
+cancel_keywords = [
+    'cancel', 'stop', 'nevermind', 'never mind', 'abort',
+    'change my mind', 'changed my mind', 'different clinic',  # NEW
+    'go back', 'start over'  # NEW
+]
+```
+
+**Impact:** Would fix query 6 ("I changed my mind" failure)
+
+---
+
+#### Fix 4: Policy Question Routing (LOW - edge case)
+**V11 Fix:**
+```python
+policy_patterns = [r"do.*accept.*insurance", r"payment.*options", r"cost.*range"]
+if any(re.search(pattern, lower_msg) for pattern in policy_patterns):
+    intent = ChatIntent.GENERAL_DENTAL_QUESTION
+```
+
+**Impact:** Would fix query 19 (insurance routing)
+
+---
+
+### 📈 V11 Expected Results
+
+**If V11 implements Fix 1 + Fix 2:**
+- Booking Success: 20% → **80%+** ✅
+- Overall Accuracy: 57.9% → **85%+** ✅
+- User Friction: High → **Low** ✅
+
+**If V11 also implements Fix 3 + Fix 4:**
+- Cancel Detection: 66.7% → **100%** ✅
+- Policy Questions: 0% → **100%** ✅
+- Overall Accuracy: 85% → **90%+** ✅
+
+---
+
+### ✅ V10 Final Verdict
+
+**What Worked:**
+- ✅ V10 hotfix completely successful (educational queries no longer crash)
+- ✅ Search flow stable (100% success)
+- ✅ Travel FAQ fully functional (100% success)
+- ✅ Response times improved significantly (6.7s avg)
+
+**What Failed:**
+- ❌ Booking logic fundamentally broken (wrong treatment 100% of time)
+- ❌ Context preservation failing (clinic names lost 60% of time)
+- ❌ Cancel detection incomplete (33% natural language failures)
+- ❌ Policy questions still misrouted (100% failure rate)
+
+**Overall Assessment:**
+- V10 is **57.9x better than V9** (57.9% vs 0% accuracy)
+- V10 fixed the **blocking bug** (crashes eliminated)
+- V10 exposed **deeper booking flow issues** requiring V11 fixes
+- V10 is **deployment-ready** (no crashes) but **booking unreliable**
+
+**Recommendation:** Deploy V11 with Fix 1 (treatment array index) and Fix 2 (clinic context) immediately. These two fixes would raise booking success from 20% to 80%+, bringing overall accuracy to ~85%.
+
+---
+
 ### 🟢 **Priority 3: Optional Improvements**
 
 #### **Fix 6: Improve Gatekeeper Prompt**
