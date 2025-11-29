@@ -376,7 +376,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         has_clinic_or_location = any(term in lower_msg for term in ["clinic", "dentist", "singapore", "jb", "johor", "first", "second", "third"])
         if is_about_treatment and not has_clinic_or_location:
             print(f"[trace:{trace_id}] [V9 FIX] Educational query detected - routing to QnA: {latest_user_message}")
-            intent = ChatIntent.QNA
+            intent = ChatIntent.GENERAL_DENTAL_QUESTION
 
     # Detect explicit location change requests ("show me JB instead", "switch to SG")
     location_change_triggers = ["show me", "switch to", "change to", "rather", "instead", "prefer"]
