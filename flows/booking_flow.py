@@ -29,6 +29,23 @@ def detect_cancellation_intent(user_message, factual_brain_model):
         
 You MUST respond with a single, valid JSON object: {{"wants_to_cancel": boolean}}
 
+Examples:
+- "abort booking" -> {{"wants_to_cancel": true}}
+- "changed my mind" -> {{"wants_to_cancel": true}}
+- "I'll call them instead" -> {{"wants_to_cancel": true}}
+- "never mind" -> {{"wants_to_cancel": true}}
+- "actually, I want scaling instead" -> {{"wants_to_cancel": false}} (correction, not cancellation)
+- "yes that's correct" -> {{"wants_to_cancel": false}}
+
+Analyze this message: "{user_message}"
+"""
+        response = factual_brain_model.generate_content(prompt)
+        result = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        return result.get("wants_to_cancel", False)
+    except Exception as e:
+        print(f"Cancellation intent detection error: {e}")
+        return False
+
 # --- V11 FIX: Extract treatment from explicit user mentions ---
 def extract_treatment_from_message(user_message, factual_brain_model):
     """
@@ -46,11 +63,11 @@ Rules:
 - Return null if no service is mentioned
 
 Examples:
-- "Book for braces at Aura Dental" → {{"service": "braces"}}
-- "I need root canal at Casa Dental" → {{"service": "root_canal"}}
-- "Book scaling at Mount Austin" → {{"service": "scaling"}}
-- "Book the first clinic" → {{"service": null}}
-- "Book clinic 2" → {{"service": null}}
+- "Book for braces at Aura Dental" -> {{"service": "braces"}}
+- "I need root canal at Casa Dental" -> {{"service": "root_canal"}}
+- "Book scaling at Mount Austin" -> {{"service": "scaling"}}
+- "Book the first clinic" -> {{"service": null}}
+- "Book clinic 2" -> {{"service": null}}
 
 User message: "{user_message}"
 """
@@ -58,7 +75,7 @@ User message: "{user_message}"
         result_text = response.text.strip()
         # Remove markdown code fences if present
         if result_text.startswith('```'):
-            result_text = result_text.split('\n', 1)[1].rsplit('\n', 1)[0].strip()
+            result_text = result_text.split('\\n', 1)[1].rsplit('\\n', 1)[0].strip()
         result = json.loads(result_text)
         service = result.get("service")
         if service:
@@ -67,23 +84,6 @@ User message: "{user_message}"
     except Exception as e:
         print(f"[V11 FIX] Treatment extraction error: {e}")
         return None
-
-Examples:
-- "abort booking" -> {{"wants_to_cancel": true}}
-- "changed my mind" -> {{"wants_to_cancel": true}}
-- "I'll call them instead" -> {{"wants_to_cancel": true}}
-- "never mind" -> {{"wants_to_cancel": true}}
-- "actually, I want scaling instead" -> {{"wants_to_cancel": false}} (correction, not cancellation)
-- "yes that's correct" -> {{"wants_to_cancel": false}}
-
-Analyze this message: "{user_message}"
-"""
-        response = factual_brain_model.generate_content(prompt)
-        result = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
-        return result.get("wants_to_cancel", False)
-    except Exception as e:
-        print(f"Cancellation intent detection error: {e}")
-        return False
 
 # --- Helper function for capturing user details (no changes needed here) ---
 def capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
