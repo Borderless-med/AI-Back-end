@@ -73,9 +73,15 @@ User message: "{user_message}"
 """
         response = factual_brain_model.generate_content(prompt)
         result_text = response.text.strip()
-        # Remove markdown code fences if present
+        # Remove markdown code fences if present, robust to single-line or no-newline outputs
         if result_text.startswith('```'):
-            result_text = result_text.split('\\n', 1)[1].rsplit('\\n', 1)[0].strip()
+            lines = result_text.split('\\n')
+            if len(lines) >= 3:
+                # Typical fenced block: first and last lines are fences
+                result_text = '\\n'.join(lines[1:-1]).strip()
+            else:
+                # Fallback: just strip fence markers
+                result_text = result_text.replace('```json', '').replace('```', '').strip()
         result = json.loads(result_text)
         service = result.get("service")
         if service:
