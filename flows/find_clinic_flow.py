@@ -899,7 +899,8 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         "applied_filters": final_filters,
         "candidate_pool": cleaned_candidate_pool,  # Use the new, clean list
         # V8 FIX: Store treatment in booking_context for later booking initiation
-        "booking_context": {"treatment": final_filters.get('services', [None])[0] if final_filters.get('services') else None}
+        # V11 FIX: Use services[-1] to get the LATEST treatment selection, not the first
+        "booking_context": {"treatment": final_filters.get('services', [None])[-1] if final_filters.get('services') else None}
     }
 
     # This line is our proof. It will print to your server log.

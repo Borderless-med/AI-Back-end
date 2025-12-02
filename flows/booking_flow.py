@@ -29,6 +29,45 @@ def detect_cancellation_intent(user_message, factual_brain_model):
         
 You MUST respond with a single, valid JSON object: {{"wants_to_cancel": boolean}}
 
+# --- V11 FIX: Extract treatment from explicit user mentions ---
+def extract_treatment_from_message(user_message, factual_brain_model):
+    """
+    Extract treatment/service if user explicitly mentions 'for X', 'need X', or 'X at clinic'.
+    Returns treatment name or None.
+    """
+    try:
+        prompt = f"""Extract the dental service from this booking request, if explicitly mentioned.
+        
+You MUST respond with a single, valid JSON object: {{"service": string or null}}
+
+Rules:
+- Only extract if the user explicitly mentions a service in their booking request
+- Map to standard service names: scaling, root_canal, braces, dental_implant, teeth_whitening, tooth_filling, dental_crown, wisdom_tooth, veneers, etc.
+- Return null if no service is mentioned
+
+Examples:
+- "Book for braces at Aura Dental" → {{"service": "braces"}}
+- "I need root canal at Casa Dental" → {{"service": "root_canal"}}
+- "Book scaling at Mount Austin" → {{"service": "scaling"}}
+- "Book the first clinic" → {{"service": null}}
+- "Book clinic 2" → {{"service": null}}
+
+User message: "{user_message}"
+"""
+        response = factual_brain_model.generate_content(prompt)
+        result_text = response.text.strip()
+        # Remove markdown code fences if present
+        if result_text.startswith('```'):
+            result_text = result_text.split('\n', 1)[1].rsplit('\n', 1)[0].strip()
+        result = json.loads(result_text)
+        service = result.get("service")
+        if service:
+            print(f"[V11 FIX] Extracted explicit treatment from user message: {service}")
+        return service
+    except Exception as e:
+        print(f"[V11 FIX] Treatment extraction error: {e}")
+        return None
+
 Examples:
 - "abort booking" -> {{"wants_to_cancel": true}}
 - "changed my mind" -> {{"wants_to_cancel": true}}
@@ -176,7 +215,13 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
             print(f"Booking Intent Extraction Error: {e}")
 
     if clinic_name:
-        treatment = (previous_filters.get('services') or ["a consultation"])[0]
+        # V11 FIX: Extract treatment from user message first (e.g., "Book for braces at Aura")
+        explicit_treatment = extract_treatment_from_message(latest_user_message, factual_brain_model)
+        
+        # V11 FIX: Use services[-1] to get the LATEST treatment, not the first
+        # Priority: explicit mention > latest from filters > default consultation
+        treatment = explicit_treatment or (previous_filters.get('services') or ["a consultation"])[-1]
+        
         new_booking_context = {"status": "confirming_details", "clinic_name": clinic_name, "treatment": treatment, "selected_clinic_name": clinic_name}
         response_text = f"Great! I can help you get started with booking. Just to confirm, are you looking to book an appointment for **{treatment}** at **{clinic_name}**?"
         return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": new_booking_context}
