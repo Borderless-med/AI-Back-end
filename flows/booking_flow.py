@@ -18,6 +18,34 @@ class Confirmation(BaseModel):
     corrected_treatment: Optional[str] = Field(None, description="If the user wants a different treatment, extract the new treatment name.")
     corrected_clinic: Optional[str] = Field(None, description="If the user wants to book at a different clinic, extract the new clinic name.")
 
+# --- Helper function: Detect cancellation intent using AI ---
+def detect_cancellation_intent(user_message, factual_brain_model):
+    """
+    Uses AI to detect if the user wants to cancel/abort the booking.
+    Returns True if cancellation intent detected, False otherwise.
+    """
+    try:
+        prompt = f"""You are an intent classification expert. Your only job is to determine if the user wants to CANCEL or ABORT the booking process.
+        
+You MUST respond with a single, valid JSON object: {{"wants_to_cancel": boolean}}
+
+Examples:
+- "abort booking" -> {{"wants_to_cancel": true}}
+- "changed my mind" -> {{"wants_to_cancel": true}}
+- "I'll call them instead" -> {{"wants_to_cancel": true}}
+- "never mind" -> {{"wants_to_cancel": true}}
+- "actually, I want scaling instead" -> {{"wants_to_cancel": false}} (correction, not cancellation)
+- "yes that's correct" -> {{"wants_to_cancel": false}}
+
+Analyze this message: "{user_message}"
+"""
+        response = factual_brain_model.generate_content(prompt)
+        result = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        return result.get("wants_to_cancel", False)
+    except Exception as e:
+        print(f"Cancellation intent detection error: {e}")
+        return False
+
 # --- Helper function for capturing user details (no changes needed here) ---
 def capture_user_info(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
     try:
@@ -65,14 +93,12 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
         # --- START: DETERMINISTIC CHECK ---
         user_reply = latest_user_message.strip().lower()
         affirmative_responses = ['yes', 'yep', 'yeah', 'ya', 'ok', 'confirm', 'correct', 'proceed', 'sounds good', 'do it', 'sure', 'alright']
-        # V9 FIX 3: Expanded negative/cancel responses to include common phrases
-        negative_responses = ['no', 'nope', 'cancel', 'stop', 'wait', 'wrong clinic', 'not right', 'quit', 'exit', 
-                            "don't want", 'do not want', 'never mind', 'nevermind', 'cancel booking', 
-                            'cancel the booking', 'cancel appointment', 'forget it', 'go back', "don't book", 'do not book']
         
-        # V9 FIX 3: Also check for cancel keywords in longer phrases
-        cancel_keywords_in_phrase = ['cancel', 'nevermind', 'forget it', 'go back', 'stop']
-        has_cancel_intent = any(keyword in user_reply for keyword in cancel_keywords_in_phrase)
+        # V11 FIX 3: Use AI-based cancellation intent detection instead of keyword matching
+        if detect_cancellation_intent(latest_user_message, factual_brain_model):
+            print(f"[V11 FIX] AI detected cancellation intent. Resetting flow. User reply: {user_reply}")
+            response_text = "Okay, I've cancelled that booking request. How else can I help you today?"
+            return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
 
         if user_reply in affirmative_responses:
             print("[DETERMINISTIC] User confirmed. Moving to gathering_info.")
@@ -80,10 +106,6 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
             response_text = "Perfect. To pre-fill the form for you, what is your **full name, email address, and WhatsApp number**?"
             return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
         
-        if user_reply in negative_responses or has_cancel_intent:
-            print(f"[V9 FIX] User cancelled/declined. Resetting flow. User reply: {user_reply}")
-            response_text = "Okay, I've cancelled that booking request. How else can I help you today?"
-            return {"response": response_text, "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": {}}
         # --- END: DETERMINISTIC CHECK ---
 
         # --- FALLBACK: If not a simple yes/no, let the AI try to figure out corrections ---
@@ -121,7 +143,8 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
 
     # V9 FIX 1: ALWAYS pull treatment from filters FIRST (even if booking_context exists)
     # This fixes the issue where frontend sends empty booking_context after navigation
-    treatment_from_filters = previous_filters.get('services', [None])[0] if previous_filters.get('services') else None
+    # V11 FIX 2: Use services[-1] to get the LATEST treatment selection, not the first
+    treatment_from_filters = previous_filters.get('services', [None])[-1] if previous_filters.get('services') else None
     if not booking_context.get("treatment") and treatment_from_filters:
         booking_context["treatment"] = treatment_from_filters
         print(f"[V9 FIX] Pulled treatment from previous_filters: {treatment_from_filters}")
