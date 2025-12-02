@@ -66,8 +66,8 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         # Block 4: Service-only queries without clinic name hints (NEW)
         # Prevents 'dental scaling' or 'scaling in JB' from being treated as clinic names
         service_keywords = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", 
-                           "whitening", "crown", "filling", "braces", "wisdom tooth", "wisdom teeth",
-                           "gum treatment", "veneers", "bonding", "inlay", "onlay", "extraction"]
+                   "whitening", "crown", "filling", "braces", "wisdom tooth", "wisdom teeth",
+                   "gum treatment", "veneers", "bonding", "inlay", "onlay", "extraction"]
         
         # Clinic name hints that suggest a proper noun
         clinic_name_hints = [" dental clinic", " clinic", " dental hub", " hub", " dental centre", 
@@ -75,6 +75,12 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         
         has_service = any(k in lower for k in service_keywords)
         has_clinic_hint = any(hint in lower for hint in clinic_name_hints)
+
+        # Explicitly guard patterns like "find scaling clinics" which previously slipped past
+        find_service_pattern = r"\bfind\b[^.,;!?]*\b(scaling|cleaning|root canal|implant|whitening|crown|filling|braces|wisdom tooth|gum treatment|veneers|bonding|inlay|onlay|extraction)\b[^.,;!?]*\bclinics?"
+        if re.search(find_service_pattern, lower):
+            print("[DirectLookup] Skipping - detected 'find [service] clinics' pattern.")
+            return False
         
         # If query has service keyword but NO clinic name hints, block DirectLookup
         # Examples: "scaling", "dental scaling", "root canal in JB" should all be blocked
@@ -86,6 +92,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             
             if not has_proper_noun:
                 print(f"[DirectLookup] Skipping - detected service-only query without clinic name.")
+                return False
+
+        # Block 5: Explicit "find <service> clinics" phrasing even when clinic hints exist
+        if has_service and "find" in lower and "clinic" in lower:
+            service_pattern = r"find[^\n]{0,80}?(" + "|".join([re.escape(k) for k in service_keywords]) + r")([^\n]{0,80}?clinics?)"
+            if re.search(service_pattern, lower):
+                print(f"[DirectLookup] Skipping - detected 'find [service] clinics' pattern.")
                 return False
         
         return True
