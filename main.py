@@ -56,6 +56,7 @@ class UserQuery(BaseModel):
 
 class SessionRestoreQuery(BaseModel):
     session_id: str
+    user_id: Optional[str] = Field(default=None)  # Accept user_id from frontend as fallback
 
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
@@ -244,11 +245,36 @@ def health():
 
 @app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
-    user_id = get_user_id_from_jwt(request)
+    """
+    Restore session state from database. Supports two authentication methods:
+    1. JWT token in X-Authorization header (preferred)
+    2. user_id in request body (fallback for compatibility)
+    """
+    try:
+        user_id = get_user_id_from_jwt(request)
+    except HTTPException:
+        # Fallback: use user_id from request body if JWT fails
+        if query.user_id:
+            user_id = query.user_id
+            print(f"[restore_session] Using user_id from body (JWT unavailable): {user_id[:8]}...")
+        else:
+            raise HTTPException(status_code=401, detail="Authentication required")
+    
     session = get_session(query.session_id, user_id)
     if session:
         state = session.get("state") or {}
-        return {"success": True, "state": state}
+        context = session.get("context") or []
+        
+        # Return structured response with all key session data
+        return {
+            "success": True,
+            "state": state,
+            "applied_filters": state.get("applied_filters", {}),
+            "candidate_pool": state.get("candidate_pool", []),
+            "booking_context": state.get("booking_context", {}),
+            "location_preference": state.get("location_preference"),
+            "conversation_history": context[-6:] if context else []  # Last 3 turns
+        }
     else:
         # NOTE: Returning 404 here is correct if session missing, frontend handles logic
         raise HTTPException(status_code=404, detail="Session not found.")
