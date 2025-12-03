@@ -56,7 +56,6 @@ class UserQuery(BaseModel):
 
 class SessionRestoreQuery(BaseModel):
     session_id: str
-    user_id: Optional[str] = Field(default=None)  # Accept user_id from frontend as fallback
 
 class ChatIntent(str, Enum):
     FIND_CLINIC = "find_clinic"
@@ -68,6 +67,13 @@ class ChatIntent(str, Enum):
     OUT_OF_SCOPE = "out_of_scope"
 
 # --- 4. MIDDLEWARE & CORS ---
+
+# SECURITY: Validate JWT secret on startup - fail fast if misconfigured
+JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("CRITICAL: SUPABASE_JWT_SECRET environment variable not set. Cannot start application.")
+print(f"✅ JWT secret loaded successfully: {JWT_SECRET[:8]}...{JWT_SECRET[-4:]}", flush=True)
+
 @app.options("/chat")
 async def chat_options():
     return Response(status_code=200)
@@ -191,10 +197,9 @@ def get_user_id_from_jwt(request: Request):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     
     token = auth_header.split(' ')[1]
-    jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
     
     try:
-        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], audience="authenticated")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], audience="authenticated")
         user_id = payload.get('sub')
         if not user_id:
             raise HTTPException(status_code=401, detail="JWT missing 'sub' claim.")
@@ -246,19 +251,11 @@ def health():
 @app.post("/restore_session")
 async def restore_session(request: Request, query: SessionRestoreQuery):
     """
-    Restore session state from database. Supports two authentication methods:
-    1. JWT token in X-Authorization header (preferred)
-    2. user_id in request body (fallback for compatibility)
+    Restore session state from database.
+    Requires valid JWT token in X-Authorization header.
     """
-    try:
-        user_id = get_user_id_from_jwt(request)
-    except HTTPException:
-        # Fallback: use user_id from request body if JWT fails
-        if query.user_id:
-            user_id = query.user_id
-            print(f"[restore_session] Using user_id from body (JWT unavailable): {user_id[:8]}...")
-        else:
-            raise HTTPException(status_code=401, detail="Authentication required")
+    # SECURITY: No fallback authentication - JWT required
+    user_id = get_user_id_from_jwt(request)
     
     session = get_session(query.session_id, user_id)
     if session:
