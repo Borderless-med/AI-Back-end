@@ -10,7 +10,7 @@ from uuid import uuid4
 from enum import Enum
 from typing import List, Optional
 import jwt
-from jwt import InvalidTokenError
+from jwt import PyJWKClient
 
 # --- 1. SETUP & CONFIGURATION ---
 load_dotenv()
@@ -73,6 +73,22 @@ JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("CRITICAL: SUPABASE_JWT_SECRET environment variable not set. Cannot start application.")
 print(f"✅ JWT secret loaded successfully: {JWT_SECRET[:8]}...{JWT_SECRET[-4:]}", flush=True)
+
+SUPABASE_PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF")
+if not SUPABASE_PROJECT_REF and supabase_url:
+    try:
+        SUPABASE_PROJECT_REF = supabase_url.split("//")[-1].split(".")[0]
+    except Exception:
+        SUPABASE_PROJECT_REF = None
+if not SUPABASE_PROJECT_REF:
+    raise RuntimeError("CRITICAL: Unable to derive Supabase project reference for JWKS validation.")
+
+JWKS_URL = f"https://{SUPABASE_PROJECT_REF}.supabase.co/auth/v1/.well-known/jwks.json"
+try:
+    JWKS_CLIENT = PyJWKClient(JWKS_URL)
+    print(f"✅ JWKS client initialized for project {SUPABASE_PROJECT_REF}", flush=True)
+except Exception as e:
+    raise RuntimeError(f"CRITICAL: Unable to initialize JWKS client: {e}")
 
 @app.options("/chat")
 async def chat_options():
@@ -187,29 +203,46 @@ def detect_booking_intent(message: str, candidate_pool: list) -> bool:
 
 # Auth Helpers
 def get_user_id_from_jwt(request: Request):
-    if request.method == "OPTIONS": return
-    
-    # print("\n--- ENTERING JWT VALIDATION ---", flush=True)
-    auth_header = request.headers.get('X-authorization')
-    # print(f"[JWT DEBUG] Auth header found: {auth_header is not None}", flush=True)
+    if request.method == "OPTIONS":
+        return
 
+    auth_header = request.headers.get('X-authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
-    
+
     token = auth_header.split(' ')[1]
-    
+
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        unverified_header = jwt.get_unverified_header(token)
+        alg = unverified_header.get('alg', "HS256")
+
+        if alg == "HS256":
+            print("⚠️ Warning: Processing legacy HS256 token", flush=True)
+            payload = jwt.decode(
+                token,
+                JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+                options={"verify_exp": True}
+            )
+        else:
+            signing_key = JWKS_CLIENT.get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256", "ES256"],
+                audience="authenticated",
+                options={"verify_exp": True}
+            )
+
         user_id = payload.get('sub')
         if not user_id:
             raise HTTPException(status_code=401, detail="JWT missing 'sub' claim.")
         return user_id
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired.")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token.")
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Unexpected error: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
 # Session Helpers
 def create_session(user_id: str) -> Optional[str]:

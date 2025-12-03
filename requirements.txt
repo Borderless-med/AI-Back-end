@@ -6,4 +6,5 @@ python-dotenv
 supabase
 numpy
 setuptools
-PyJWT
+PyJWT[crypto]
+requests
