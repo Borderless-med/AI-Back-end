@@ -16,9 +16,9 @@ EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 
 # Pre-defined sentiment intent descriptions (loaded once at module import)
 SENTIMENT_INTENTS = {
-    'sentiment_dentist_skill': "skilled expert experienced competent professional qualified knowledgeable",
+    'sentiment_dentist_skill': "skilled expert experienced competent professional qualified knowledgeable skilful skillful proficient adept accomplished talented masterful capable",
     'sentiment_pain_management': "gentle painless comfortable soft tender loving light touch no pain minimal discomfort",
-    'sentiment_cost_value': "affordable cheap budget value economical reasonable worth good deal",
+    'sentiment_cost_value': "affordable cheap budget value economical reasonable worth good deal cost-effective",
     'sentiment_staff_service': "friendly helpful polite courteous kind welcoming attentive nice staff",
     'sentiment_ambiance_cleanliness': "clean hygienic modern nice pleasant spotless tidy well-maintained",
     'sentiment_convenience': "convenient quick fast easy accessible short wait time nearby close"
@@ -820,10 +820,18 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                     db_queries[i] = (name, q.eq(mapped_column, True))
 
     # --- COST LOOKUP / COMPARISON DETECTION ---
-    # Simple mapping using proceduresData-like keys (lowercased) for cost queries
-    cost_keywords = ["cost", "price", "how much", "expensive", "cheaper"]
+    # Use word-boundary patterns to distinguish price queries from quality adjectives
+    # "how much cost" → PRICE QUERY ✓
+    # "cost-effective" → QUALITY QUERY (sentiment) ✗
+    cost_price_patterns = [
+        r"\bhow much\b",
+        r"\bprice\b",
+        r"\bcost\s+(of|for|is|are)\b",  # "cost of", "cost for scaling"
+        r"\bexpensive\b",
+        r"\bcheaper\b"
+    ]
     comparison_keywords = ["compare", "vs", "versus", "difference", "jb or sg", "sg or jb"]
-    wants_cost = any(k in message_lower for k in cost_keywords)
+    wants_cost = any(re.search(pattern, message_lower) for pattern in cost_price_patterns)
     wants_comparison = any(k in message_lower for k in comparison_keywords)
 
     procedures_reference: Dict[str, Dict[str, str]] = {
