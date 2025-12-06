@@ -124,7 +124,7 @@ def capture_user_info(latest_user_message, booking_context, previous_filters, ca
         return {"response": "I'm sorry, I had trouble capturing those details. Please try again.", "applied_filters": previous_filters, "candidate_pool": candidate_clinics, "booking_context": booking_context}
 
 # --- THIS IS THE NEW, SMARTER handle_booking_flow FUNCTION ---
-def handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model):
+def handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model, session_state=None):
     
     # --- STAGE 3: CAPTURING USER INFO ---
     if booking_context.get("status") == "gathering_info":
@@ -198,6 +198,12 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
     if booking_context.get("selected_clinic_name"):
         clinic_name = booking_context.get("selected_clinic_name")
         print(f"Preserving previously selected clinic from context: {clinic_name}")
+    # Check for implicit reference ("book here", "this one", etc.)
+    elif session_state and any(word in latest_user_message.lower() for word in ['here', 'this one', 'this clinic', 'that one']):
+        last_shown = session_state.get('last_shown_clinic')
+        if last_shown:
+            clinic_name = last_shown.get('name')
+            print(f"[IMPLICIT REF] Detected '{latest_user_message}' → Using last shown clinic: {clinic_name}")
     elif candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
         for word, index in pos_map.items():

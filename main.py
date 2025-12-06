@@ -487,6 +487,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
             if ordinal_clinic:
                 state["selected_clinic_id"] = ordinal_clinic.get("id")
+                state["last_shown_clinic"] = ordinal_clinic  # Track for "book here" implicit reference
                 print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
                 # Store clinic name in booking context for later booking initiation
                 updated_booking_context = booking_context.copy()
@@ -762,7 +763,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         )
 
     elif intent == ChatIntent.BOOK_APPOINTMENT:
-        response_data = handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model)
+        response_data = handle_booking_flow(latest_user_message, booking_context, previous_filters, candidate_clinics, factual_brain_model, state)
 
     elif intent == ChatIntent.CANCEL_BOOKING:
         response_data = {"response": "Okay, I've cancelled that booking request. How else can I help you today?", "booking_context": {}}
