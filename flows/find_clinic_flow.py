@@ -66,16 +66,44 @@ def extract_quality_adjectives(user_message: str) -> List[str]:
         return []
     
     try:
-        doc = nlp(user_message.lower())
+        message_lower = user_message.lower()
         
-        # Extract adjectives and quality adverbs
+        # STEP 1: Extract compound adjectives BEFORE spaCy tokenization
+        # These get split by spaCy's tokenizer (cost-effective → cost + effective)
+        compound_adjectives = [
+            'cost-effective', 'high-quality', 'well-trained', 'well-equipped',
+            'state-of-the-art', 'top-rated', 'highly-skilled', 'family-friendly',
+            'budget-friendly', 'time-saving', 'pain-free', 'long-lasting'
+        ]
         quality_words = []
+        for compound in compound_adjectives:
+            if compound in message_lower:
+                # Map compound to its core meaning for embedding
+                # "cost-effective" → "affordable" for better matching
+                if compound == 'cost-effective':
+                    quality_words.append('affordable')
+                elif compound in ['high-quality', 'top-rated']:
+                    quality_words.append('skilled')
+                elif compound in ['budget-friendly']:
+                    quality_words.append('affordable')
+                elif compound in ['family-friendly']:
+                    quality_words.append('friendly')
+                elif compound in ['pain-free']:
+                    quality_words.append('painless')
+                else:
+                    # For others, use the compound as-is
+                    quality_words.append(compound)
+        
+        # STEP 2: Extract single-word adjectives using spaCy POS tagging
+        doc = nlp(message_lower)
         for token in doc:
             # Include adjectives (gentle, skilled, affordable)
             if token.pos_ == 'ADJ':
                 # Exclude generic superlatives that don't carry sentiment
-                if token.text not in ['best', 'good', 'better', 'top', 'great']:
-                    quality_words.append(token.text)
+                if token.text not in ['best', 'good', 'better', 'top', 'great', 'effective']:
+                    # Avoid duplicates from compound processing
+                    if token.text not in quality_words:
+                        quality_words.append(token.text)
         
         print(f"[SENTIMENT] Extracted quality adjectives: {quality_words}")
         return quality_words
