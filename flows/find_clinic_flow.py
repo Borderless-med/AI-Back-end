@@ -2,6 +2,7 @@ import json
 import string
 import re
 import numpy as np
+import spacy
 import google.generativeai as genai
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
@@ -38,6 +39,14 @@ except Exception as e:
     print(f"[SENTIMENT INIT] Failed to preload embeddings: {e}")
     SENTIMENT_EMBEDDINGS = {}
 
+# Load spaCy model for adjective extraction
+try:
+    nlp = spacy.load("en_core_web_sm")
+    print("[SENTIMENT INIT] Loaded spaCy model for adjective extraction")
+except OSError:
+    print("[SENTIMENT INIT] WARNING: spaCy model not found - run 'python -m spacy download en_core_web_sm'")
+    nlp = None
+
 # --- Pydantic Models required for this flow ---
 class ServiceEnum(str, Enum):
     scaling = 'scaling'; braces = 'braces'; tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; teeth_whitening = 'teeth_whitening'; veneers = 'veneers'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; enamel_shaping = 'enamel_shaping'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'; general_dentistry = 'general_dentistry'
@@ -46,53 +55,98 @@ class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
 
-# --- Sentiment Detection Function ---
-def detect_sentiment_intent(user_message: str, threshold=0.65) -> Optional[str]:
+# --- Quality Adjective Extraction ---
+def extract_quality_adjectives(user_message: str) -> List[str]:
     """
-    Detect if user is asking for clinics based on sentiment criteria using semantic similarity.
-    Returns the sentiment field to sort by, or None if no strong match (< threshold).
+    Extract quality adjectives/adverbs from user query using NLP.
+    Filters out filler words, locations, treatments (handled elsewhere).
+    """
+    if not nlp:
+        print("[SENTIMENT] spaCy not loaded - cannot extract adjectives")
+        return []
+    
+    try:
+        doc = nlp(user_message.lower())
+        
+        # Extract adjectives and quality adverbs
+        quality_words = []
+        for token in doc:
+            # Include adjectives (gentle, skilled, affordable)
+            if token.pos_ == 'ADJ':
+                # Exclude generic superlatives that don't carry sentiment
+                if token.text not in ['best', 'good', 'better', 'top', 'great']:
+                    quality_words.append(token.text)
+        
+        print(f"[SENTIMENT] Extracted quality adjectives: {quality_words}")
+        return quality_words
+        
+    except Exception as e:
+        print(f"[SENTIMENT] Error extracting adjectives: {e}")
+        return []
+
+# --- Sentiment Detection Function ---
+def detect_sentiment_intent(user_message: str, threshold=0.65) -> List[str]:
+    """
+    Detect sentiment dimensions based on quality adjectives in user query.
+    Returns list of sentiment fields to use for ranking (supports multi-quality queries).
+    Returns empty list if no strong matches found.
     """
     if not SENTIMENT_EMBEDDINGS:
         print("[SENTIMENT] Embeddings not loaded - skipping sentiment detection")
-        return None
+        return []
+    
+    # Extract quality adjectives from query
+    quality_words = extract_quality_adjectives(user_message)
+    
+    if not quality_words:
+        print("[SENTIMENT] No quality adjectives found in query")
+        return []
+    
+    detected_fields = []
     
     try:
-        # Get embedding for user query
-        query_response = genai.embed_content(
-            model=EMBEDDING_MODEL_NAME,
-            content=user_message,
-            task_type="retrieval_query"
-        )
-        query_embedding = query_response['embedding']
-        
-        # Calculate cosine similarity with each sentiment intent
-        similarities = {}
-        for field, intent_embedding in SENTIMENT_EMBEDDINGS.items():
-            similarity = np.dot(query_embedding, intent_embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(intent_embedding)
+        # Check each quality word against sentiment dimensions
+        for quality_word in quality_words:
+            print(f"[SENTIMENT] Analyzing quality word: '{quality_word}'")
+            
+            # Get embedding for this quality word only
+            query_response = genai.embed_content(
+                model=EMBEDDING_MODEL_NAME,
+                content=quality_word,
+                task_type="retrieval_query"
             )
-            similarities[field] = similarity
+            query_embedding = query_response['embedding']
+            
+            # Calculate cosine similarity with each sentiment intent
+            similarities = {}
+            for field, intent_embedding in SENTIMENT_EMBEDDINGS.items():
+                similarity = np.dot(query_embedding, intent_embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(intent_embedding)
+                )
+                similarities[field] = similarity
+            
+            # Find best match for this quality word
+            best_field = max(similarities.items(), key=lambda x: x[1])
+            sentiment_field, similarity_score = best_field
+            
+            # Log similarities for debugging
+            print(f"[SENTIMENT] Similarity scores for '{quality_word}':")
+            for field, score in sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:3]:
+                print(f"  {field}: {score:.3f}")
+            
+            # Add to detected fields if confidence is high enough
+            if similarity_score >= threshold:
+                if sentiment_field not in detected_fields:  # Avoid duplicates
+                    detected_fields.append(sentiment_field)
+                    print(f"[SENTIMENT] ✓ Matched '{quality_word}' → {sentiment_field} (score: {similarity_score:.3f})")
+            else:
+                print(f"[SENTIMENT] ✗ '{quality_word}' best match {sentiment_field} below threshold ({similarity_score:.3f} < {threshold})")
         
-        # Find best match
-        best_field = max(similarities.items(), key=lambda x: x[1])
-        sentiment_field, similarity_score = best_field
-        
-        # Log all similarities for debugging
-        print(f"[SENTIMENT] Similarity scores:")
-        for field, score in sorted(similarities.items(), key=lambda x: x[1], reverse=True):
-            print(f"  {field}: {score:.3f}")
-        
-        # Only use sentiment ranking if confidence is high enough
-        if similarity_score >= threshold:
-            print(f"[SENTIMENT] ✓ Matched {sentiment_field} (score: {similarity_score:.3f})")
-            return sentiment_field
-        else:
-            print(f"[SENTIMENT] ✗ Best match {sentiment_field} below threshold ({similarity_score:.3f} < {threshold})")
-            return None
+        return detected_fields
             
     except Exception as e:
         print(f"[SENTIMENT] Error during detection: {e}")
-        return None
+        return []
 
 # --- The main handler function for this flow ---
 def handle_find_clinic(latest_user_message, conversation_history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS, session_state: dict = None):
@@ -902,13 +956,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         quality_gated_clinics = [c for c in candidate_clinics if c.get('rating', 0) >= 4.5 and c.get('reviews', 0) >= 30]
         print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
         
-        # --- SENTIMENT-BASED RE-RANKING ---
-        # Detect if user is asking for sentiment-based criteria (e.g., "gentle dentist", "skilled dentist")
-        sentiment_field = detect_sentiment_intent(latest_user_message)
+        # --- SENTIMENT-BASED RE-RANKING (Multi-Quality Support) ---
+        # Detect sentiment dimensions based on quality adjectives in query
+        sentiment_fields = detect_sentiment_intent(latest_user_message)
         ranking_note = "Top 3 clinics chosen by rating and review volume."
         sentiment_applied = False
         
-        if sentiment_field:
+        if sentiment_fields:
             # Map field names to user-friendly descriptions
             sentiment_labels = {
                 'sentiment_dentist_skill': 'dentist expertise',
@@ -918,23 +972,38 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 'sentiment_ambiance_cleanliness': 'ambiance and cleanliness',
                 'sentiment_convenience': 'convenience'
             }
-            dimension_label = sentiment_labels.get(sentiment_field, 'patient feedback')
             
-            # Filter out clinics with NULL sentiment values for this dimension
-            clinics_with_sentiment = [c for c in quality_gated_clinics if c.get(sentiment_field) is not None]
+            # Calculate average score function for multi-quality queries
+            def calc_average_sentiment_score(clinic):
+                """Calculate average across detected sentiment dimensions, excluding NULLs."""
+                scores = [clinic.get(field, 0) for field in sentiment_fields 
+                         if clinic.get(field) is not None]
+                return sum(scores) / len(scores) if scores else 0
+            
+            # Filter out clinics that have NULL for ALL detected sentiment dimensions
+            clinics_with_sentiment = [c for c in quality_gated_clinics 
+                                     if any(c.get(field) is not None for field in sentiment_fields)]
             
             if clinics_with_sentiment:
-                # Sort by sentiment score (highest first), then by rating as tie-breaker
+                # Sort by average sentiment score (highest first), then by rating as tie-breaker
                 clinics_with_sentiment.sort(
-                    key=lambda c: (c.get(sentiment_field, 0), c.get('rating', 0)),
+                    key=lambda c: (calc_average_sentiment_score(c), c.get('rating', 0)),
                     reverse=True
                 )
                 quality_gated_clinics = clinics_with_sentiment
-                ranking_note = f"Top 3 clinics ranked by patient feedback on {dimension_label}."
+                
+                # Build ranking note based on number of qualities detected
+                if len(sentiment_fields) > 1:
+                    dimension_labels = [sentiment_labels.get(f, 'patient feedback') for f in sentiment_fields]
+                    ranking_note = f"Top 3 clinics ranked by combined patient feedback on {' and '.join(dimension_labels)}."
+                else:
+                    dimension_label = sentiment_labels.get(sentiment_fields[0], 'patient feedback')
+                    ranking_note = f"Top 3 clinics ranked by patient feedback on {dimension_label}."
+                
                 sentiment_applied = True
-                print(f"[SENTIMENT] ✓ Re-ranked {len(clinics_with_sentiment)} clinics by {sentiment_field}")
+                print(f"[SENTIMENT] ✓ Re-ranked {len(clinics_with_sentiment)} clinics by {len(sentiment_fields)} dimension(s): {sentiment_fields}")
             else:
-                print(f"[SENTIMENT] ⚠ No clinics have data for {sentiment_field}, falling back to rating sort")
+                print(f"[SENTIMENT] ⚠ No clinics have data for detected dimensions: {sentiment_fields}, falling back to rating sort")
         
         # Default sort by rating/reviews if no sentiment detected or no sentiment data available
         if not sentiment_applied:

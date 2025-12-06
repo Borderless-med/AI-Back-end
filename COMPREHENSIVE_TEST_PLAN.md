@@ -139,7 +139,7 @@
 
 #### **1.1 Basic Service Search**
 ```
-Query: "Find clinics for scaling"
+Query: ""Find clinics for scaling
 Expected: Prompt for location (SG/JB/Both) if no preference set
 Test: Verify location prompt appears with 3 buttons
 ```

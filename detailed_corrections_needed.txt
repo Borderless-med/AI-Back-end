@@ -1,0 +1,17 @@
+COMPREHENSIVE CORRECTIONS FOR faqs_semantic TABLE
+====================================================================================================
+
+FAQ ID: 33
+Category: costs
+Field: answer
+Issues: 1
+  - Wrong multiplication symbol: 'Ã' → '×'
+
+ORIGINAL:
+Taxi often 10â20Ã bus price (time vs money trade); multiplier varies with surgecompare live Grab fare against posted bus fare.
+
+CORRECTED:
+Taxi often 10â20× bus price (time vs money trade); multiplier varies with surgecompare live Grab fare against posted bus fare.
+
+----------------------------------------------------------------------------------------------------
+
