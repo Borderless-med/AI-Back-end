@@ -100,7 +100,7 @@ def extract_quality_adjectives(user_message: str) -> List[str]:
             # Include adjectives (gentle, skilled, affordable)
             if token.pos_ == 'ADJ':
                 # Exclude generic superlatives that don't carry sentiment
-                if token.text not in ['best', 'good', 'better', 'top', 'great', 'effective']:
+                if token.text not in ['best', 'good', 'better', 'top', 'great', 'effective', 'most', 'more']:
                     # Avoid duplicates from compound processing
                     if token.text not in quality_words:
                         quality_words.append(token.text)
@@ -113,11 +113,12 @@ def extract_quality_adjectives(user_message: str) -> List[str]:
         return []
 
 # --- Sentiment Detection Function ---
-def detect_sentiment_intent(user_message: str, threshold=0.65) -> List[str]:
+def detect_sentiment_intent(user_message: str, threshold=0.60) -> List[str]:
     """
     Detect sentiment dimensions based on quality adjectives in user query.
     Returns list of sentiment fields to use for ranking (supports multi-quality queries).
     Returns empty list if no strong matches found.
+    Threshold lowered to 0.60 to catch borderline matches (friendly: 0.641, skilful: 0.678).
     """
     if not SENTIMENT_EMBEDDINGS:
         print("[SENTIMENT] Embeddings not loaded - skipping sentiment detection")
