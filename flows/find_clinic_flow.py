@@ -1,6 +1,7 @@
 import json
 import string
 import re
+import numpy as np
 import google.generativeai as genai
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
@@ -9,6 +10,34 @@ from enum import Enum
 from typing import Optional, List, Tuple, Dict
 from .utils import derive_clinic_tags
 
+# --- Sentiment-Based Ranking Configuration ---
+EMBEDDING_MODEL_NAME = "models/text-embedding-004"
+
+# Pre-defined sentiment intent descriptions (loaded once at module import)
+SENTIMENT_INTENTS = {
+    'sentiment_dentist_skill': "skilled expert experienced competent professional qualified knowledgeable",
+    'sentiment_pain_management': "gentle painless comfortable soft tender loving light touch no pain minimal discomfort",
+    'sentiment_cost_value': "affordable cheap budget value economical reasonable worth good deal",
+    'sentiment_staff_service': "friendly helpful polite courteous kind welcoming attentive nice staff",
+    'sentiment_ambiance_cleanliness': "clean hygienic modern nice pleasant spotless tidy well-maintained",
+    'sentiment_convenience': "convenient quick fast easy accessible short wait time nearby close"
+}
+
+# Pre-compute embeddings for each sentiment dimension (done once at module load)
+SENTIMENT_EMBEDDINGS = {}
+try:
+    for field, text in SENTIMENT_INTENTS.items():
+        response = genai.embed_content(
+            model=EMBEDDING_MODEL_NAME,
+            content=text,
+            task_type="retrieval_query"
+        )
+        SENTIMENT_EMBEDDINGS[field] = response['embedding']
+    print(f"[SENTIMENT INIT] Loaded {len(SENTIMENT_EMBEDDINGS)} sentiment embeddings")
+except Exception as e:
+    print(f"[SENTIMENT INIT] Failed to preload embeddings: {e}")
+    SENTIMENT_EMBEDDINGS = {}
+
 # --- Pydantic Models required for this flow ---
 class ServiceEnum(str, Enum):
     scaling = 'scaling'; braces = 'braces'; tooth_filling = 'tooth_filling'; root_canal = 'root_canal'; dental_crown = 'dental_crown'; dental_implant = 'dental_implant'; teeth_whitening = 'teeth_whitening'; veneers = 'veneers'; wisdom_tooth = 'wisdom_tooth'; gum_treatment = 'gum_treatment'; composite_veneers = 'composite_veneers'; porcelain_veneers = 'porcelain_veneers'; dental_bonding = 'dental_bonding'; inlays_onlays = 'inlays_onlays'; enamel_shaping = 'enamel_shaping'; gingivectomy = 'gingivectomy'; bone_grafting = 'bone_grafting'; sinus_lift = 'sinus_lift'; frenectomy = 'frenectomy'; tmj_treatment = 'tmj_treatment'; sleep_apnea_appliances = 'sleep_apnea_appliances'; crown_lengthening = 'crown_lengthening'; oral_cancer_screening = 'oral_cancer_screening'; alveoplasty = 'alveoplasty'; general_dentistry = 'general_dentistry'
@@ -16,6 +45,54 @@ class ServiceEnum(str, Enum):
 class UserIntent(BaseModel):
     service: Optional[ServiceEnum] = Field(None, description="Extract any specific dental service mentioned.")
     township: Optional[str] = Field(None, description="Extract any specific location or township mentioned.")
+
+# --- Sentiment Detection Function ---
+def detect_sentiment_intent(user_message: str, threshold=0.65) -> Optional[str]:
+    """
+    Detect if user is asking for clinics based on sentiment criteria using semantic similarity.
+    Returns the sentiment field to sort by, or None if no strong match (< threshold).
+    """
+    if not SENTIMENT_EMBEDDINGS:
+        print("[SENTIMENT] Embeddings not loaded - skipping sentiment detection")
+        return None
+    
+    try:
+        # Get embedding for user query
+        query_response = genai.embed_content(
+            model=EMBEDDING_MODEL_NAME,
+            content=user_message,
+            task_type="retrieval_query"
+        )
+        query_embedding = query_response['embedding']
+        
+        # Calculate cosine similarity with each sentiment intent
+        similarities = {}
+        for field, intent_embedding in SENTIMENT_EMBEDDINGS.items():
+            similarity = np.dot(query_embedding, intent_embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(intent_embedding)
+            )
+            similarities[field] = similarity
+        
+        # Find best match
+        best_field = max(similarities.items(), key=lambda x: x[1])
+        sentiment_field, similarity_score = best_field
+        
+        # Log all similarities for debugging
+        print(f"[SENTIMENT] Similarity scores:")
+        for field, score in sorted(similarities.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {field}: {score:.3f}")
+        
+        # Only use sentiment ranking if confidence is high enough
+        if similarity_score >= threshold:
+            print(f"[SENTIMENT] ✓ Matched {sentiment_field} (score: {similarity_score:.3f})")
+            return sentiment_field
+        else:
+            print(f"[SENTIMENT] ✗ Best match {sentiment_field} below threshold ({similarity_score:.3f} < {threshold})")
+            return None
+            
+    except Exception as e:
+        print(f"[SENTIMENT] Error during detection: {e}")
+        return None
 
 # --- The main handler function for this flow ---
 def handle_find_clinic(latest_user_message, conversation_history, previous_filters, candidate_clinics, factual_brain_model, ranking_brain_model, embedding_model, generation_model, supabase, RESET_KEYWORDS, session_state: dict = None):
@@ -824,12 +901,45 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     if candidate_clinics:
         quality_gated_clinics = [c for c in candidate_clinics if c.get('rating', 0) >= 4.5 and c.get('reviews', 0) >= 30]
         print(f"Found {len(quality_gated_clinics)} candidates after Quality Gate.")
-        # --- FIX: THIS IS THE NEW, CORRECT SORTING LOGIC ---
-        # Step 2: Sort the qualified clinics by the quality standard (best first).
-        # We sort by rating (highest first), then by number of reviews (highest first) as a tie-breaker.
-        quality_gated_clinics.sort(key=lambda c: (c.get('rating', 0), c.get('reviews', 0)), reverse=True)
+        
+        # --- SENTIMENT-BASED RE-RANKING ---
+        # Detect if user is asking for sentiment-based criteria (e.g., "gentle dentist", "skilled dentist")
+        sentiment_field = detect_sentiment_intent(latest_user_message)
+        ranking_note = "Top 3 clinics chosen by rating and review volume."
+        sentiment_applied = False
+        
+        if sentiment_field:
+            # Map field names to user-friendly descriptions
+            sentiment_labels = {
+                'sentiment_dentist_skill': 'dentist expertise',
+                'sentiment_pain_management': 'gentle care',
+                'sentiment_cost_value': 'value for money',
+                'sentiment_staff_service': 'staff service',
+                'sentiment_ambiance_cleanliness': 'ambiance and cleanliness',
+                'sentiment_convenience': 'convenience'
+            }
+            dimension_label = sentiment_labels.get(sentiment_field, 'patient feedback')
+            
+            # Filter out clinics with NULL sentiment values for this dimension
+            clinics_with_sentiment = [c for c in quality_gated_clinics if c.get(sentiment_field) is not None]
+            
+            if clinics_with_sentiment:
+                # Sort by sentiment score (highest first), then by rating as tie-breaker
+                clinics_with_sentiment.sort(
+                    key=lambda c: (c.get(sentiment_field, 0), c.get('rating', 0)),
+                    reverse=True
+                )
+                quality_gated_clinics = clinics_with_sentiment
+                ranking_note = f"Top 3 clinics ranked by patient feedback on {dimension_label}."
+                sentiment_applied = True
+                print(f"[SENTIMENT] ✓ Re-ranked {len(clinics_with_sentiment)} clinics by {sentiment_field}")
+            else:
+                print(f"[SENTIMENT] ⚠ No clinics have data for {sentiment_field}, falling back to rating sort")
+        
+        # Default sort by rating/reviews if no sentiment detected or no sentiment data available
+        if not sentiment_applied:
+            quality_gated_clinics.sort(key=lambda c: (c.get('rating', 0), c.get('reviews', 0)), reverse=True)
         # --------------------------------------------------
-
 
         qualified_clinics = quality_gated_clinics
 
@@ -850,7 +960,8 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
  
     augmented_prompt = (
         'You are a Data Formatter. Your only job is to take the following JSON data and format it into a friendly, conversational, and easy-to-read summary for a user. '
-        'Present the top 3 clinics clearly. Start with a one-line explanation: "Top 3 clinics chosen by rating and review volume." '
+        f'Present the top 3 clinics clearly. Start with this explanation: "{ranking_note}" '
+        'CRITICAL: Never mention or display sentiment scores, aspect scores, or any numeric ratings other than the overall Google rating and review count. '
         'Do not output raw JSON. **Data:**\n```json\n' + context + '\n```'
     )
 
@@ -871,7 +982,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             fallback_list.append(f"- **{clinic.get('name')}** (Rating: {clinic.get('rating')}, Reviews: {clinic.get('reviews')})")
         
         response_text = (
-            "Top 3 clinics chosen by rating and review volume.\n\n"
+            f"{ranking_note}\n\n"
             + "I found a few highly-rated clinics for you:\n" + "\n".join(fallback_list)
             + "\n\nWould you like to book an appointment at one of these locations?"
         )
