@@ -194,6 +194,20 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
             print(f"[DirectLookup] Skipping - detected location change intent.")
             return False
         
+        # Block 3B: Quality adjective queries (for sentiment-based ranking)
+        # These should pass through to sentiment detection, not DirectLookup
+        quality_adjectives = [
+            "gentle", "painless", "comfortable", "soft", "tender",  # pain_management
+            "skilled", "expert", "experienced", "competent", "professional", "qualified",  # dentist_skill
+            "affordable", "cheap", "budget", "value", "economical", "reasonable", "worth",  # cost_value
+            "friendly", "helpful", "polite", "courteous", "kind", "welcoming", "attentive", "nice",  # staff_service
+            "clean", "hygienic", "modern", "pleasant", "spotless", "tidy",  # ambiance_cleanliness
+            "convenient", "quick", "fast", "easy", "accessible", "nearby", "close"  # convenience
+        ]
+        if any(adj in lower for adj in quality_adjectives):
+            print(f"[DirectLookup] Skipping - detected quality adjective (sentiment query).")
+            return False
+        
         # Block 4: Service-only queries without clinic name hints (NEW)
         # Prevents 'dental scaling' or 'scaling in JB' from being treated as clinic names
         service_keywords = ["scaling", "cleaning", "scale", "polish", "root canal", "implant", 
