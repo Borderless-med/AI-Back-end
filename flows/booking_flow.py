@@ -34,6 +34,8 @@ Examples:
 - "changed my mind" -> {{"wants_to_cancel": true}}
 - "I'll call them instead" -> {{"wants_to_cancel": true}}
 - "never mind" -> {{"wants_to_cancel": true}}
+- "go back" -> {{"wants_to_cancel": true}}
+- "start over" -> {{"wants_to_cancel": true}}
 - "actually, I want scaling instead" -> {{"wants_to_cancel": false}} (correction, not cancellation)
 - "yes that's correct" -> {{"wants_to_cancel": false}}
 

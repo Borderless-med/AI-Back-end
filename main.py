@@ -502,7 +502,8 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     # If user is in active booking flow, check for exit keywords FIRST
     if booking_context.get("status") in ["confirming_details", "gathering_info"]:
         # Check if user wants to cancel/exit booking
-        cancel_keywords = ["cancel", "stop", "quit", "exit", "no", "nope", "don't want", "do not want"]
+        cancel_keywords = ["cancel", "stop", "quit", "exit", "no", "nope", "don't want", "do not want", 
+                          "abort", "changed my mind", "change my mind", "i'll call", "go back", "start over", "never mind", "nevermind"]
         travel_keywords = ["direction", "travel", "get there", "how to go", "how do i get"]
         
         has_cancel_intent = any(kw in lower_msg for kw in cancel_keywords)
