@@ -275,6 +275,13 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
                 print(f"[DirectLookup] Skipping - detected 'find [service] clinics' pattern.")
                 return False
         
+        # Block 6: "service + in + location" pattern (NEW FIX)
+        # Prevents "root canal in JB", "scaling in Singapore" from being treated as clinic names
+        service_in_location_pattern = r'\b(root canal|scaling|cleaning|braces|implant|dental implant|whitening|crown|filling|veneer|wisdom tooth|extraction|gum treatment)\s+(?:clinic[s]?\s+)?in\s+(jb|johor|singapore|sg|malaysia|my|johor bahru)\b'
+        if re.search(service_in_location_pattern, lower, re.IGNORECASE):
+            print(f"[DirectLookup] Guard blocked 'service + in + location' pattern: '{message}'")
+            return False
+        
         return True
     
     def attempt_direct_clinic_lookup(message: str):
@@ -635,6 +642,19 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
         print(f"Factual Brain extracted: {current_filters}")
     except Exception as e:
         print(f"Factual Brain Error: {e}")
+
+    # NEW: Preserve location from previous filters if not explicitly changed
+    # Prevents location reset when user only changes treatment (e.g., "Actually I need braces")
+    if previous_filters and isinstance(previous_filters, dict):
+        # If no township extracted but we have previous township, preserve it
+        if 'township' not in current_filters and 'township' in previous_filters:
+            current_filters['township'] = previous_filters['township']
+            print(f"[CONTEXT PRESERVE] Keeping previous township: {previous_filters['township']}")
+        
+        # If no country extracted but we have previous country, preserve it
+        if 'country' not in current_filters and 'country' in previous_filters:
+            current_filters['country'] = previous_filters['country']
+            print(f"[CONTEXT PRESERVE] Keeping previous country: {previous_filters['country']}")
 
     # Deterministic fallback for service extraction when LLM misses or is inconsistent
     def heuristic_service_from_text(text: str) -> Optional[str]:
