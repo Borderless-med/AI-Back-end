@@ -272,6 +272,52 @@ def update_session(session_id: str, user_id: str, context: dict, conversation_hi
     except Exception as e:
         logging.error(f"Error updating session {session_id}: {e}")
 
+def check_api_calls_remaining(user_id: str) -> int:
+    """Check how many API calls the user has remaining. Returns -1 if unlimited or error."""
+    try:
+        response = supabase.table("user_profiles").select("api_calls_remaining").eq("id", user_id).single().execute()
+        if response.data:
+            remaining = response.data.get("api_calls_remaining")
+            if remaining is None:
+                return -1  # Unlimited
+            return int(remaining)
+        return -1  # User profile not found = unlimited
+    except Exception as e:
+        logging.error(f"Error checking API calls for user {user_id}: {e}")
+        return -1  # On error, allow the request (fail open)
+
+def decrement_api_calls(user_id: str) -> bool:
+    """Decrement the user's API call counter. Returns True if successful, False if user has no calls left."""
+    try:
+        # First check current count
+        response = supabase.table("user_profiles").select("api_calls_remaining").eq("id", user_id).single().execute()
+        if not response.data:
+            logging.warning(f"User profile not found for {user_id}, allowing request")
+            return True
+        
+        remaining = response.data.get("api_calls_remaining")
+        if remaining is None:
+            # Null means unlimited
+            return True
+        
+        if remaining <= 0:
+            logging.warning(f"User {user_id} has no API calls remaining")
+            return False
+        
+        # Decrement the counter
+        new_count = remaining - 1
+        supabase.table("user_profiles").update({
+            "api_calls_remaining": new_count,
+            "updated_at": "now()"
+        }).eq("id", user_id).execute()
+        
+        logging.info(f"✅ Decremented API calls for user {user_id}: {remaining} -> {new_count}")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error decrementing API calls for user {user_id}: {e}")
+        return True  # On error, allow the request (fail open)
+
 # --- 6. ENDPOINTS ---
 
 @app.get("/")
@@ -322,7 +368,25 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         print(f"[trace:{trace_id}] [ERROR] Auth failed: {e.detail}")
         raise e
 
-    # 2. SESSION LOADING
+    # 2. API CALL LIMIT CHECK
+    remaining_calls = check_api_calls_remaining(secure_user_id)
+    print(f"[trace:{trace_id}] [API LIMIT] User {secure_user_id[:8]}... has {remaining_calls} calls remaining")
+    
+    if remaining_calls == 0:
+        print(f"[trace:{trace_id}] [API LIMIT] User has exhausted their API calls")
+        raise HTTPException(
+            status_code=429, 
+            detail="You have reached your monthly conversation limit. Please upgrade your account or wait until next month."
+        )
+    
+    # Decrement the counter
+    if not decrement_api_calls(secure_user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="You have reached your monthly conversation limit."
+        )
+
+    # 3. SESSION LOADING
     session_id = query.session_id
     session = get_session(session_id, secure_user_id) if session_id else None
     if not session:
