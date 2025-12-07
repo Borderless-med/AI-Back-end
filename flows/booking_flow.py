@@ -207,19 +207,39 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
             clinic_name = last_shown.get('name')
             print(f"[IMPLICIT REF] Detected '{latest_user_message}' → Using last shown clinic: {clinic_name}")
     elif candidate_clinics and len(candidate_clinics) > 0:
-        pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
-        ordinal_out_of_bounds = False
-        for word, index in pos_map.items():
-            if re.search(r'\b' + word + r'\b', latest_user_message):
+        # V12 FIX: Use comprehensive ordinal detection with bounds checking
+        # Check for ordinal patterns: 1st, 2nd, 3rd, 4th, 5th, #1, #2, etc.
+        msg_lower = latest_user_message.lower().strip()
+        
+        # CRITICAL: Detect ordinal patterns BEFORE AI extraction
+        # This prevents "5th clinic" from being extracted as literal clinic name
+        ordinal_patterns = [
+            (r'\b(first|1st)\b|(?<!\w)#1(?!\w)', 0),
+            (r'\b(second|2nd)\b|(?<!\w)#2(?!\w)', 1),
+            (r'\b(third|3rd)\b|(?<!\w)#3(?!\w)', 2),
+            (r'\b(fourth|4th)\b|(?<!\w)#4(?!\w)', 3),
+            (r'\b(fifth|5th)\b|(?<!\w)#5(?!\w)', 4),
+            (r'\b(sixth|6th)\b|(?<!\w)#6(?!\w)', 5),
+            (r'\b(seventh|7th)\b|(?<!\w)#7(?!\w)', 6),
+            (r'\b(eighth|8th)\b|(?<!\w)#8(?!\w)', 7),
+            (r'\b(ninth|9th)\b|(?<!\w)#9(?!\w)', 8),
+            (r'\b(tenth|10th)\b|(?<!\w)#10(?!\w)', 9),
+            (r'\blast\b', -1),
+        ]
+        
+        ordinal_matched = False
+        for pattern, index in ordinal_patterns:
+            if re.search(pattern, msg_lower):
+                ordinal_matched = True
                 try:
                     clinic_name = candidate_clinics[index]['name']
-                    print(f"Found positional reference '{word}'. Selected clinic: {clinic_name}")
+                    print(f"[BOOKING ORDINAL] Matched pattern '{pattern}' → index {index} → {clinic_name}")
                     break
                 except IndexError:
-                    ordinal_out_of_bounds = True
+                    # Out of bounds - return helpful error
                     actual_count = len(candidate_clinics)
-                    print(f"Positional reference '{word}' found, but index is out of bounds for candidate pool (only {actual_count} clinics available).")
-                    # Return helpful error message
+                    ordinal_number = index + 1 if index >= 0 else actual_count
+                    print(f"[BOOKING ORDINAL] Pattern matched but out of bounds: requested #{ordinal_number}, only {actual_count} available")
                     return {
                         "response": f"I only showed you {actual_count} clinic{'s' if actual_count != 1 else ''}. Please choose from 1 to {actual_count}, or specify the clinic name directly.",
                         "applied_filters": previous_filters,
