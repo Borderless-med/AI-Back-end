@@ -208,6 +208,7 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
             print(f"[IMPLICIT REF] Detected '{latest_user_message}' → Using last shown clinic: {clinic_name}")
     elif candidate_clinics and len(candidate_clinics) > 0:
         pos_map = {'first': 0, '1st': 0, 'second': 1, '2nd': 1, 'third': 2, '3rd': 2, 'last': -1}
+        ordinal_out_of_bounds = False
         for word, index in pos_map.items():
             if re.search(r'\b' + word + r'\b', latest_user_message):
                 try:
@@ -215,8 +216,16 @@ def handle_booking_flow(latest_user_message, booking_context, previous_filters, 
                     print(f"Found positional reference '{word}'. Selected clinic: {clinic_name}")
                     break
                 except IndexError:
-                    print(f"Positional reference '{word}' found, but index is out of bounds for candidate pool.")
-                    pass
+                    ordinal_out_of_bounds = True
+                    actual_count = len(candidate_clinics)
+                    print(f"Positional reference '{word}' found, but index is out of bounds for candidate pool (only {actual_count} clinics available).")
+                    # Return helpful error message
+                    return {
+                        "response": f"I only showed you {actual_count} clinic{'s' if actual_count != 1 else ''}. Please choose from 1 to {actual_count}, or specify the clinic name directly.",
+                        "applied_filters": previous_filters,
+                        "candidate_pool": candidate_clinics,
+                        "booking_context": booking_context
+                    }
     
     if not clinic_name:
         print("No positional reference found. Using AI to extract clinic name.")

@@ -1169,7 +1169,7 @@ def handle_find_clinic(latest_user_message, conversation_history, previous_filte
     }
     
     # Add latest_service indicator to filters for better recall
-    if final_filters.get('services'):
+    if final_filters.get('services') and len(final_filters['services']) > 0:
         final_response_data["applied_filters"]["latest_service"] = final_filters['services'][-1]
 
     # This line is our proof. It will print to your server log.
