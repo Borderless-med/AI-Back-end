@@ -166,12 +166,13 @@ def resolve_ordinal_reference(message: str, candidate_pool: list) -> dict | None
     
     # PRIORITY 2: Simple ordinal patterns (checked SECOND)
     # Only reached if no compound pattern matched
+    # Hash patterns use negative lookbehind/lookahead to avoid word boundaries (# is not \w)
     simple_patterns = [
-        (r'\b(first|1st|#1)\b', 0),
-        (r'\b(second|2nd|#2)\b', 1),
-        (r'\b(third|3rd|#3)\b', 2),
-        (r'\b(fourth|4th|#4)\b', 3),
-        (r'\b(fifth|5th|#5)\b', 4),
+        (r'\b(first|1st)\b|(?<!\w)#1(?!\w)', 0),
+        (r'\b(second|2nd)\b|(?<!\w)#2(?!\w)', 1),
+        (r'\b(third|3rd)\b|(?<!\w)#3(?!\w)', 2),
+        (r'\b(fourth|4th)\b|(?<!\w)#4(?!\w)', 3),
+        (r'\b(fifth|5th)\b|(?<!\w)#5(?!\w)', 4),
     ]
     
     for pattern, index in simple_patterns:
