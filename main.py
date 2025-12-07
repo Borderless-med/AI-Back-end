@@ -461,8 +461,8 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     
     # B. Check for ordinal references to existing clinics (Priority #2)
     # But skip if this is primarily a travel query
-    ordinal_pattern = r'\b(first|second|third|1st|2nd|3rd|#1|#2|#3)\b.*(clinic|one|option|list)'
-    if re.search(ordinal_pattern, lower_msg, re.IGNORECASE) and not has_travel_intent:
+    # Trust resolve_ordinal_reference() function to handle pattern matching (typo-tolerant)
+    if not has_travel_intent and candidate_clinics:
         # V8 FIX: Check for booking keywords FIRST to prevent ordinal hijacking
         booking_keywords = ["book", "appointment", "schedule", "reserve", "make an appointment", "i want to book"]
         has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
@@ -470,19 +470,6 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
         if has_booking_intent:
             print(f"[trace:{trace_id}] [V8 FIX] Booking keyword detected - skipping ordinal check")
             intent = ChatIntent.BOOK_APPOINTMENT
-        elif not candidate_clinics:
-            print(f"[trace:{trace_id}] [ORDINAL] Pattern detected but no candidates available.")
-            state["awaiting_location"] = True
-            response_data = {
-                "response": "I don't have a clinic list ready right now. Let me help you search — which country would you like to explore?",
-                "applied_filters": {}, "candidate_pool": [], "booking_context": {},
-                "meta": {"type": "location_prompt", "options": [{"key": "jb", "label": "JB"}, {"key": "sg", "label": "SG"}, {"key": "both", "label": "Both"}]}
-            }
-            updated_history = [msg.model_dump() for msg in query.history]
-            updated_history.append({"role": "assistant", "content": response_data["response"]})
-            update_session(session_id, secure_user_id, state, updated_history)
-            response_data["session_id"] = session_id
-            return response_data
         else:
             ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
             if ordinal_clinic:
@@ -498,23 +485,6 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
                     "candidate_pool": candidate_clinics,
                     "booking_context": updated_booking_context,
                     "meta": {"type": "clinic_detail", "clinic": ordinal_clinic}
-                }
-                updated_history = [msg.model_dump() for msg in query.history]
-                updated_history.append({"role": "assistant", "content": response_data["response"]})
-                update_session(session_id, secure_user_id, state, updated_history)
-                response_data["session_id"] = session_id
-                return response_data
-            else:
-                # Pattern matched but couldn't resolve - return first clinic as fallback
-                print(f"[trace:{trace_id}] [ORDINAL] Pattern matched but resolve failed - returning first clinic.")
-                first_clinic = candidate_clinics[0]
-                state["selected_clinic_id"] = first_clinic.get("id")
-                response_data = {
-                    "response": f"**{first_clinic.get('name')}**\n\nAddress: {first_clinic.get('address')}\nRating: {first_clinic.get('rating')} ({first_clinic.get('reviews')} reviews)\nHours: {first_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
-                    "applied_filters": previous_filters,
-                    "candidate_pool": candidate_clinics,
-                    "booking_context": booking_context,
-                    "meta": {"type": "clinic_detail", "clinic": first_clinic}
                 }
                 updated_history = [msg.model_dump() for msg in query.history]
                 updated_history.append({"role": "assistant", "content": response_data["response"]})
