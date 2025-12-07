@@ -398,6 +398,7 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
             }
             updated_history = [msg.model_dump() for msg in query.history]
             updated_history.append({"role": "assistant", "content": response_data["response"]})
+            # Save location preference to database
             update_session(session_id, secure_user_id, state, updated_history)
             response_data["session_id"] = session_id
             return response_data
@@ -463,23 +464,30 @@ async def handle_chat(request: Request, query: UserQuery, response: Response):
     # B. Check for ordinal references to existing clinics (Priority #2)
     # But skip if this is primarily a travel query
     # Trust resolve_ordinal_reference() function to handle pattern matching (typo-tolerant)
+    # CRITICAL FIX: Resolve ordinals BEFORE checking booking keywords
+    # This allows "book the 5th clinic" to properly resolve to clinic #5
     if not has_travel_intent and candidate_clinics:
-        # V8 FIX: Check for booking keywords FIRST to prevent ordinal hijacking
-        booking_keywords = ["book", "appointment", "schedule", "reserve", "make an appointment", "i want to book"]
-        has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
-        
-        if has_booking_intent:
-            print(f"[trace:{trace_id}] [V8 FIX] Booking keyword detected - skipping ordinal check")
-            intent = ChatIntent.BOOK_APPOINTMENT
-        else:
-            ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
-            if ordinal_clinic:
-                state["selected_clinic_id"] = ordinal_clinic.get("id")
-                state["last_shown_clinic"] = ordinal_clinic  # Track for "book here" implicit reference
-                print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
-                # Store clinic name in booking context for later booking initiation
-                updated_booking_context = booking_context.copy()
-                updated_booking_context["selected_clinic_name"] = ordinal_clinic.get('name')
+        ordinal_clinic = resolve_ordinal_reference(latest_user_message, candidate_clinics)
+        if ordinal_clinic:
+            state["selected_clinic_id"] = ordinal_clinic.get("id")
+            state["last_shown_clinic"] = ordinal_clinic  # Track for "book here" implicit reference
+            print(f"[trace:{trace_id}] [ORDINAL] Resolved to: {ordinal_clinic.get('name')}")
+            # Store clinic name in booking context for later booking initiation
+            updated_booking_context = booking_context.copy()
+            updated_booking_context["selected_clinic_name"] = ordinal_clinic.get('name')
+            
+            # Check if user wants to book this clinic immediately
+            booking_keywords = ["book", "appointment", "schedule", "reserve", "make an appointment", "i want to book"]
+            has_booking_intent = any(kw in lower_msg for kw in booking_keywords)
+            
+            if has_booking_intent:
+                # User said "book the 3rd clinic" - proceed directly to booking
+                print(f"[trace:{trace_id}] [ORDINAL+BOOKING] Combined intent: booking {ordinal_clinic.get('name')}")
+                intent = ChatIntent.BOOK_APPOINTMENT
+                # Update session with resolved clinic before entering booking flow
+                update_session(session_id, secure_user_id, state, [msg.model_dump() for msg in query.history])
+            else:
+                # User just said "#3" or "the third one" - show details
                 response_data = {
                     "response": f"**{ordinal_clinic.get('name')}**\n\nAddress: {ordinal_clinic.get('address')}\nRating: {ordinal_clinic.get('rating')} ({ordinal_clinic.get('reviews')} reviews)\nHours: {ordinal_clinic.get('operating_hours', 'N/A')}\n\nWould you like to book an appointment here, or get travel directions?",
                     "applied_filters": previous_filters,
